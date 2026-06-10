@@ -1,0 +1,5 @@
+build/
+models/
+sessions/
+*.gguf
+.DS_Store
