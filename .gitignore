@@ -3,3 +3,4 @@ models/
 sessions/
 *.gguf
 .DS_Store
+llm_tracing_plan.md
