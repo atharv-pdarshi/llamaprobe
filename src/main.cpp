@@ -1,5 +1,6 @@
 #include "hook_engine.hpp"
 #include "types.hpp"
+#include "tui/app.hpp"
 
 #include "llama.h"
 #include "ggml.h"
@@ -150,8 +151,7 @@ int main(int argc, char** argv) {
     if (!args.tui_enabled) {
         ui_thread = std::thread([&]{ dump_packets(engine, running); });
     } else {
-        // TODO(Phase 1): launch TUI — placeholder print for now
-        std::printf("TUI coming in next phase. Run with --no-tui to see raw packets.\n");
+        ui_thread = std::thread([&]{ run_tui(engine); });
     }
 
     // ── Run inference ─────────────────────────────────────────────────────────

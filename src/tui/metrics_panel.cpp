@@ -1,0 +1,92 @@
+#include "metrics_panel.hpp"
+
+#include "ftxui/component/component.hpp"
+#include "ftxui/dom/elements.hpp"
+#include "ftxui/screen/color.hpp"
+
+#include <algorithm>
+#include <iomanip>
+#include <sstream>
+
+using namespace ftxui;
+
+// Render a filled bar: "████░░░░░ 54.2%"
+static Element sparsity_bar(float sparsity, int width = 16) {
+    int filled = static_cast<int>(sparsity * width);
+    std::string bar(filled, '\xe2'); // approximate — actual block chars below
+    std::string bar_str;
+    for (int i = 0; i < width; ++i)
+        bar_str += (i < filled) ? "█" : "░";
+    bar_str += " " + std::to_string(static_cast<int>(sparsity * 100)) + "%";
+
+    Color c = sparsity > 0.8f ? Color::Yellow :
+              sparsity > 0.5f ? Color::White   : Color::Green;
+    return text(bar_str) | color(c);
+}
+
+static std::string shape_str(const std::vector<int64_t>& shape) {
+    std::string s = "[";
+    for (size_t i = 0; i < shape.size(); ++i) {
+        s += std::to_string(shape[i]);
+        if (i + 1 < shape.size()) s += ", ";
+    }
+    return s + "]";
+}
+
+ftxui::Component make_metrics_panel(HookEngine& engine,
+                                     bool& focused,
+                                     const std::string& selected_layer) {
+    return Renderer([&engine, &focused, &selected_layer]() -> Element {
+        // Find the most recent packet for the selected layer
+        LayerPacket pkt{};
+        bool found = false;
+
+        if (!selected_layer.empty()) {
+            auto snap = engine.packets.snapshot();
+            for (int i = static_cast<int>(snap.size()) - 1; i >= 0; --i) {
+                if (snap[i].layer_name == selected_layer) {
+                    pkt   = snap[i];
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        Elements rows;
+        if (!found) {
+            rows.push_back(text("  Select a layer in Panel 1 (Space)") | color(Color::GrayDark));
+        } else {
+            std::ostringstream max_str, mean_str, lat_str;
+            max_str  << std::fixed << std::setprecision(3) << pkt.max_val;
+            mean_str << std::fixed << std::setprecision(4) << pkt.mean;
+            lat_str  << std::fixed << std::setprecision(3) << pkt.latency_ms;
+
+            Color lat_color = pkt.latency_ms > 5.f ? Color::Yellow : Color::Green;
+            Color max_color = pkt.max_val > 6.f    ? Color::Red    : Color::White;
+
+            rows = {
+                hbox({ text("Layer   : ") | bold, text(pkt.layer_name) | color(Color::Cyan) }),
+                hbox({ text("Type    : ") | bold, text(layer_type_str(pkt.type)) | color(Color::Yellow) }),
+                hbox({ text("Shape   : ") | bold, text(shape_str(pkt.shape)) }),
+                hbox({ text("Dtype   : ") | bold, text(dtype_str(pkt.dtype)) }),
+                separator(),
+                hbox({ text("Sparsity: ") | bold, sparsity_bar(pkt.sparsity) }),
+                hbox({ text("Mean    : ") | bold, text(mean_str.str()) }),
+                hbox({ text("Max     : ") | bold, text(max_str.str()) | color(max_color) }),
+                separator(),
+                hbox({
+                    text("Latency : ") | bold,
+                    text(lat_str.str() + "ms") | color(lat_color),
+                    text(pkt.latency_ms > 5.f ? "  ⚠" : "  ✓") | color(lat_color),
+                }),
+                hbox({ text("Device  : ") | bold, text(device_str(pkt.device)) }),
+            };
+        }
+
+        auto bcolor = focused ? Color::Cyan : Color::GrayDark;
+        return window(
+            text("── 4. RUNTIME METRICS INSPECTOR") | color(bcolor),
+            vbox(std::move(rows)) | flex
+        );
+    });
+}
