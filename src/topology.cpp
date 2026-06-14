@@ -1,5 +1,6 @@
 #include "topology.hpp"
 #include <algorithm>
+#include <map>
 #include <sstream>
 
 // Classify a layer name into a LayerType
