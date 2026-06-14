@@ -1,6 +1,7 @@
 #include "topology_panel.hpp"
 
 #include "ftxui/component/component.hpp"
+#include "ftxui/component/event.hpp"
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/screen/color.hpp"
 

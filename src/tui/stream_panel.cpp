@@ -1,8 +1,11 @@
 #include "stream_panel.hpp"
 
 #include "ftxui/component/component.hpp"
+#include "ftxui/component/event.hpp"
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/screen/color.hpp"
+
+#include <cstring>
 
 #include <algorithm>
 #include <iomanip>

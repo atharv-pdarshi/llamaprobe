@@ -18,11 +18,37 @@
 
 using namespace ftxui;
 
+static Element make_help_overlay() {
+    auto row = [](const char* key, const char* action) {
+        return hbox({
+            text(key)    | color(Color::Yellow) | size(WIDTH, EQUAL, 18),
+            text(action) | color(Color::White),
+        });
+    };
+    return vbox({
+        text("  Keybindings  ") | bold | center,
+        separator(),
+        row(" Tab / Shift+Tab", " Cycle panel focus"),
+        row(" j / k",           " Navigate up / down in panel"),
+        row(" h / l",           " Pan attention matrix left / right"),
+        row(" Space",           " Select layer as capture target"),
+        row(" F",               " Toggle attention matrix fullscreen"),
+        row(" + / -",           " Increase / decrease contrast"),
+        row(" H / L",           " Cycle attention head"),
+        row(" P",               " Pause / resume live capture"),
+        row(" Q",               " Quit"),
+        row(" ?",               " Toggle this help"),
+        separator(),
+        text(" Press ? or Esc to close ") | center | color(Color::GrayDark),
+    }) | border | color(Color::Blue);
+}
+
 void run_tui(HookEngine& engine) {
     // ── Shared state ──────────────────────────────────────────────────────────
     int         focused        = 0;   // 0-4 for panels 1-5
     std::string selected_layer;       // set by Panel 1 Space key
     bool        paused         = false;
+    bool        show_help      = false;
 
     // Per-panel focus flags — passed by ref into each panel
     std::array<bool, 5> panel_focused = {true, false, false, false, false};
@@ -72,13 +98,21 @@ void run_tui(HookEngine& engine) {
             p5->Render() | flex,
         });
 
-        return vbox({
+        Element main = vbox({
             status,
             separator(),
             row1 | size(HEIGHT, LESS_THAN, 18),
             row2 | size(HEIGHT, LESS_THAN, 14),
             row3 | flex,
         });
+
+        if (show_help) {
+            return dbox({
+                main,
+                make_help_overlay() | clear_under | center,
+            });
+        }
+        return main;
     });
 
     // ── Global keyboard handler ───────────────────────────────────────────────
@@ -100,6 +134,16 @@ void run_tui(HookEngine& engine) {
         if (e == Event::TabReverse) {
             focused = (focused + 4) % 5;
             update_focus();
+            return true;
+        }
+        // ? — toggle help overlay
+        if (e == Event::Character('?')) {
+            show_help = !show_help;
+            return true;
+        }
+        // Esc — close help overlay if open
+        if (show_help && e == Event::Escape) {
+            show_help = false;
             return true;
         }
         // P — pause/resume capture
