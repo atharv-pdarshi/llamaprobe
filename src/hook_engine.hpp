@@ -1,6 +1,7 @@
 #pragma once
 
 #include "types.hpp"
+#include "anomaly_detector.hpp"
 #include "ring_buffer.hpp"
 #include "metrics.hpp"
 #include "llama.h"
@@ -11,6 +12,9 @@
 #include <vector>
 #include <mutex>
 #include <atomic>
+#include <chrono>
+
+class Session;
 
 class HookEngine {
 public:
@@ -33,6 +37,11 @@ public:
     // ── Stats (read by TUI status bar) ────────────────────────────────────────
     std::atomic<uint32_t> packet_count{0};
     std::atomic<uint32_t> anomaly_count{0};
+    std::atomic<uint32_t> token_count{0};
+    std::atomic<bool>     recording{false};
+    std::chrono::steady_clock::time_point inference_start;
+    Session*              session_ptr = nullptr;
+    AnomalyConfig         anomaly_cfg;
 
     // ── Callback entry point (public so the static trampoline can call it) ────
     void on_tensor(const struct ggml_tensor* t);
@@ -43,9 +52,6 @@ private:
     std::mutex               tokens_mtx_;
 
     // Anomaly thresholds (configurable later via config file)
-    float thresh_max_activation = 6.0f;
-    float thresh_sparsity       = 0.80f;
-    float thresh_latency_mult   = 3.0f;   // spike if latency > N * rolling avg
     float rolling_avg_latency_  = 0.f;
 
     LayerType     classify_layer(const char* name) const;

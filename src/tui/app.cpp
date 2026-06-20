@@ -1,4 +1,5 @@
 #include "app.hpp"
+#include "session.hpp"
 #include "topology_panel.hpp"
 #include "stream_panel.hpp"
 #include "attention_panel.hpp"
@@ -45,6 +46,10 @@ static Element make_help_overlay() {
 
 void run_tui(HookEngine& engine) {
     // ── Shared state ──────────────────────────────────────────────────────────
+    Session session;
+    std::string record_path = "session.json";
+    engine.session_ptr = &session;
+
     int         focused        = 0;   // 0-4 for panels 1-5
     std::string selected_layer;       // set by Panel 1 Space key
     bool        paused         = false;
@@ -71,10 +76,25 @@ void run_tui(HookEngine& engine) {
     auto root = Renderer([&](bool) -> Element {
         // Status bar
         std::ostringstream sb;
-        sb << " llamaprobe "
-           << "| packets: " << engine.packet_count.load()
-           << "  anomalies: " << engine.anomaly_count.load()
-           << (paused ? "  [PAUSED]" : "");
+        sb << " llamaprobe ";
+
+        // tokens/sec
+        uint32_t toks = engine.token_count.load();
+        if (toks > 0) {
+            auto now     = std::chrono::steady_clock::now();
+            double secs  = std::chrono::duration<double>(
+                               now - engine.inference_start).count();
+            double tps   = secs > 0.0 ? toks / secs : 0.0;
+            sb << "| " << std::fixed << std::setprecision(1) << tps << " tok/s  ";
+        }
+
+        sb << "| packets: " << engine.packet_count.load()
+           << "  anomalies: " << engine.anomaly_count.load();
+
+        if (engine.recording.load())
+            sb << "  ● REC";
+        if (paused)
+            sb << "  [PAUSED]";
 
         std::string keyhint =
             " [Tab] Cycle Focus  [Space] Select Layer  "
@@ -151,6 +171,18 @@ void run_tui(HookEngine& engine) {
             paused = !paused;
             return true;
         }
+        // R — toggle recording
+        if (e == Event::Character('r') || e == Event::Character('R')) {
+            bool was = engine.recording.load();
+            bool next_state = !was;
+            engine.recording.store(next_state);
+            if (next_state) {
+                session.start_recording(record_path);
+            } else {
+                session.stop_recording();
+            }
+            return true;
+        }
 
         // Dispatch j/k/h/l/Space/H/L/+/- to the focused panel
         switch (focused) {
@@ -173,6 +205,10 @@ void run_tui(HookEngine& engine) {
     });
 
     screen.Loop(app);
+
+    if (engine.recording.load()) {
+        session.stop_recording();
+    }
 
     running = false;
     refresh.join();

@@ -18,6 +18,7 @@ public:
     static std::vector<LayerPacket> load(const std::string& path);
 
 private:
-    bool        recording_ = false;
-    std::string path_;
+    bool                     recording_ = false;
+    std::string              path_;
+    std::vector<LayerPacket> buffer_;
 };

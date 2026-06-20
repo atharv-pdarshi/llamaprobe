@@ -1,6 +1,7 @@
 #include "hook_engine.hpp"
 #include "types.hpp"
 #include "tui/app.hpp"
+#include "session.hpp"
 
 #include "llama.h"
 #include "ggml.h"
@@ -22,6 +23,9 @@ struct Args {
     int         n_threads    = 4;
     bool        tui_enabled  = true;   // false = just dump packets to stdout (debug)
     std::string replay_path;           // --replay <session.json>
+    float       thresh_max_activation = 6.0f;
+    float       thresh_sparsity       = 0.80f;
+    float       thresh_latency_mult   = 3.0f;
 };
 
 static Args parse_args(int argc, char** argv) {
@@ -41,6 +45,12 @@ static Args parse_args(int argc, char** argv) {
             a.replay_path = argv[++i];
             a.tui_enabled = true;
         }
+        else if (std::strcmp(argv[i], "--max-activation") == 0 && i + 1 < argc)
+            a.thresh_max_activation = static_cast<float>(std::atof(argv[++i]));
+        else if (std::strcmp(argv[i], "--sparsity-threshold") == 0 && i + 1 < argc)
+            a.thresh_sparsity = static_cast<float>(std::atof(argv[++i]));
+        else if (std::strcmp(argv[i], "--latency-mult") == 0 && i + 1 < argc)
+            a.thresh_latency_mult = static_cast<float>(std::atof(argv[++i]));
     }
     return a;
 }
@@ -75,17 +85,47 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
             "Usage: llamaprobe --model <path.gguf> [--prompt <text>]\n"
             "                  [--n-predict N] [--threads N] [--no-tui]\n"
+            "                  [--max-activation F] [--sparsity-threshold F] [--latency-mult F]\n"
             "       llamaprobe --replay <session.json>\n");
         return 1;
     }
 
     // ── Setup hook engine ─────────────────────────────────────────────────────
     HookEngine engine;
+    engine.anomaly_cfg.max_activation = args.thresh_max_activation;
+    engine.anomaly_cfg.sparsity       = args.thresh_sparsity;
+    engine.anomaly_cfg.latency_mult   = args.thresh_latency_mult;
 
     if (!args.replay_path.empty()) {
-        // TODO(Phase 4): implement replay from session JSON
-        std::fprintf(stderr, "Replay not yet implemented.\n");
-        return 1;
+        auto packets = Session::load(args.replay_path);
+        if (packets.empty()) {
+            std::fprintf(stderr, "Failed to load session: %s\n",
+                         args.replay_path.c_str());
+            return 1;
+        }
+
+        // Feed packets into the engine on a background thread, then run TUI
+        std::thread feeder([&] {
+            uint64_t prev_ts = 0;
+            for (const auto& pkt : packets) {
+                if (prev_ts > 0 && pkt.timestamp_us > prev_ts) {
+                    uint64_t delay_us = pkt.timestamp_us - prev_ts;
+                    // Cap per-packet sleep to 50 ms so replay doesn't feel sluggish
+                    uint64_t sleep_us = std::min(delay_us, uint64_t(50'000));
+                    std::this_thread::sleep_for(
+                        std::chrono::microseconds(sleep_us));
+                }
+                prev_ts = pkt.timestamp_us;
+                engine.packets.push(pkt);
+                engine.packet_count.fetch_add(1);
+                if (pkt.is_anomaly)
+                    engine.anomaly_count.fetch_add(1);
+            }
+        });
+
+        run_tui(engine);
+        feeder.join();
+        return 0;
     }
 
     // ── Load model ────────────────────────────────────────────────────────────
@@ -175,6 +215,7 @@ int main(int argc, char** argv) {
 
         batch = llama_batch_get_one(&new_tok, 1);
         if (llama_decode(ctx, batch) != 0) break;
+        engine.token_count.fetch_add(1);
     }
     if (!args.tui_enabled) std::printf("\n");
 

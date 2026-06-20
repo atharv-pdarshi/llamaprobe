@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(llamaprobe LANGUAGES CXX)
 
+set(BUILD_SHARED_LIBS OFF)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -71,3 +73,8 @@ add_executable(test_topology tests/test_topology.cpp src/topology.cpp)
 target_include_directories(test_topology PRIVATE src/ third_party/nlohmann)
 target_link_libraries(test_topology PRIVATE llama ggml)
 add_test(NAME topology COMMAND test_topology)
+
+add_executable(test_integration tests/test_integration.cpp src/session.cpp)
+target_include_directories(test_integration PRIVATE src/ third_party/nlohmann)
+target_link_libraries(test_integration PRIVATE llama ggml)
+add_test(NAME integration COMMAND test_integration)

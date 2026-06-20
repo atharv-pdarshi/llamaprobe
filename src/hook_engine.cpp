@@ -1,4 +1,5 @@
 #include "hook_engine.hpp"
+#include "session.hpp"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -24,6 +25,7 @@ void HookEngine::set_tokens(std::vector<std::string> toks) {
 }
 
 void HookEngine::begin_inference() {
+    inference_start = std::chrono::steady_clock::now();
     metrics_.reset();
     packet_count  = 0;
     anomaly_count = 0;
@@ -58,6 +60,10 @@ void HookEngine::on_tensor(const struct ggml_tensor* t) {
 
     check_anomalies(pkt, stats);
     packets.push(pkt);
+
+    if (session_ptr && recording.load()) {
+        session_ptr->append(pkt);
+    }
 
     // Capture attention weight matrix separately if this is an attention output
     if (is_attention_weights(name) && t->data &&
@@ -160,18 +166,18 @@ void HookEngine::check_anomalies(const LayerPacket& pkt,
     if (stats.has_nan || stats.has_inf)
         emit(AnomalySeverity::Critical, "NaN or Inf detected in activation");
 
-    if (pkt.max_val > thresh_max_activation)
+    if (pkt.max_val > anomaly_cfg.max_activation)
         emit(AnomalySeverity::Warning,
              "Outlier activation: max=" + std::to_string(pkt.max_val) +
-             " > threshold=" + std::to_string(thresh_max_activation));
+             " > threshold=" + std::to_string(anomaly_cfg.max_activation));
 
-    if (pkt.sparsity > thresh_sparsity)
+    if (pkt.sparsity > anomaly_cfg.sparsity)
         emit(AnomalySeverity::Info,
              "High sparsity: " + std::to_string(int(pkt.sparsity * 100)) + "%");
 
     // Latency spike detection using rolling average
     if (rolling_avg_latency_ > 0.f &&
-        pkt.latency_ms > thresh_latency_mult * rolling_avg_latency_)
+        pkt.latency_ms > anomaly_cfg.latency_mult * rolling_avg_latency_)
         emit(AnomalySeverity::Warning,
              "Slow layer: " + std::to_string(pkt.latency_ms) + "ms (avg=" +
              std::to_string(rolling_avg_latency_) + "ms)");
