@@ -4,6 +4,7 @@
 #include "ftxui/component/event.hpp"
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/screen/color.hpp"
+#include "ftxui/screen/terminal.hpp"
 
 #include <cstring>
 
@@ -58,7 +59,7 @@ ftxui::Component make_stream_panel(HookEngine& engine, bool& focused) {
 
         // Clamp scroll
         int total = static_cast<int>(packets.size());
-        int visible = 12;
+        int visible = std::max(4, ftxui::Terminal::Size().dimy - 24);
         *scroll = std::clamp(*scroll, 0, std::max(0, total - visible));
         int start = std::max(0, total - visible - *scroll);
         int end   = std::min(total, start + visible);

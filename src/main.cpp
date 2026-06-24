@@ -23,6 +23,7 @@ struct Args {
     int         n_threads    = 4;
     bool        tui_enabled  = true;   // false = just dump packets to stdout (debug)
     std::string replay_path;           // --replay <session.json>
+    std::string record_path;           // --record <path>  (empty = no auto-record)
     float       thresh_max_activation = 6.0f;
     float       thresh_sparsity       = 0.80f;
     float       thresh_latency_mult   = 3.0f;
@@ -45,6 +46,8 @@ static Args parse_args(int argc, char** argv) {
             a.replay_path = argv[++i];
             a.tui_enabled = true;
         }
+        else if (std::strcmp(argv[i], "--record") == 0 && i + 1 < argc)
+            a.record_path = argv[++i];
         else if (std::strcmp(argv[i], "--max-activation") == 0 && i + 1 < argc)
             a.thresh_max_activation = static_cast<float>(std::atof(argv[++i]));
         else if (std::strcmp(argv[i], "--sparsity-threshold") == 0 && i + 1 < argc)
@@ -85,6 +88,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
             "Usage: llamaprobe --model <path.gguf> [--prompt <text>]\n"
             "                  [--n-predict N] [--threads N] [--no-tui]\n"
+            "                  [--record <path.json>]\n"
             "                  [--max-activation F] [--sparsity-threshold F] [--latency-mult F]\n"
             "       llamaprobe --replay <session.json>\n");
         return 1;
@@ -123,7 +127,7 @@ int main(int argc, char** argv) {
             }
         });
 
-        run_tui(engine);
+        run_tui(engine, "");   // no recording during replay
         feeder.join();
         return 0;
     }
@@ -191,7 +195,7 @@ int main(int argc, char** argv) {
     if (!args.tui_enabled) {
         ui_thread = std::thread([&]{ dump_packets(engine, running); });
     } else {
-        ui_thread = std::thread([&]{ run_tui(engine); });
+        ui_thread = std::thread([&]{ run_tui(engine, args.record_path); });
     }
 
     // ── Run inference ─────────────────────────────────────────────────────────

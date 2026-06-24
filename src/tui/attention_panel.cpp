@@ -4,6 +4,7 @@
 #include "ftxui/component/event.hpp"
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/screen/color.hpp"
+#include "ftxui/screen/terminal.hpp"
 
 #include <algorithm>
 #include <sstream>
@@ -65,8 +66,11 @@ ftxui::Component make_attention_panel(HookEngine& engine, bool& focused) {
         int total_heads    = static_cast<int>(cap->total_heads);
 
         // Viewport
-        int vw = state->fullscreen ? 24 : 12;  // visible columns
-        int vh = state->fullscreen ? 16 : 8;   // visible rows
+        auto [tw, th] = ftxui::Terminal::Size();
+        int vw = state->fullscreen ? tw - 12 : std::min(12, tw - 20);
+        int vh = state->fullscreen ? th - 8  : std::min(8,  th - 30);
+        vw = std::max(4, vw);
+        vh = std::max(2, vh);
         state->pan_row = std::clamp(state->pan_row, 0, std::max(0, seq_len - vh));
         state->pan_col = std::clamp(state->pan_col, 0, std::max(0, seq_len - vw));
 

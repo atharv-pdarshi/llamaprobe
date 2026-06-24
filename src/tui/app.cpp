@@ -36,6 +36,8 @@ static Element make_help_overlay() {
         row(" F",               " Toggle attention matrix fullscreen"),
         row(" + / -",           " Increase / decrease contrast"),
         row(" H / L",           " Cycle attention head"),
+        row(" R",               " Toggle session recording"),
+        row(" E",               " Export current buffer to JSON"),
         row(" P",               " Pause / resume live capture"),
         row(" Q",               " Quit"),
         row(" ?",               " Toggle this help"),
@@ -44,11 +46,24 @@ static Element make_help_overlay() {
     }) | border | color(Color::Blue);
 }
 
-void run_tui(HookEngine& engine) {
+static void export_snapshot(HookEngine& engine, const std::string& path) {
+    Session tmp;
+    tmp.start_recording(path);
+    for (const auto& pkt : engine.packets.snapshot())
+        tmp.append(pkt);
+    tmp.stop_recording();
+}
+
+void run_tui(HookEngine& engine, const std::string& cli_record_path) {
     // ── Shared state ──────────────────────────────────────────────────────────
     Session session;
-    std::string record_path = "session.json";
+    std::string record_path = cli_record_path.empty() ? "session.json" : cli_record_path;
     engine.session_ptr = &session;
+
+    if (!cli_record_path.empty()) {
+        session.start_recording(record_path);
+        engine.recording.store(true);
+    }
 
     int         focused        = 0;   // 0-4 for panels 1-5
     std::string selected_layer;       // set by Panel 1 Space key
@@ -181,6 +196,11 @@ void run_tui(HookEngine& engine) {
             } else {
                 session.stop_recording();
             }
+            return true;
+        }
+        // E — export current packet buffer to JSON
+        if (e == Event::Character('e') || e == Event::Character('E')) {
+            export_snapshot(engine, "session_export.json");
             return true;
         }
 

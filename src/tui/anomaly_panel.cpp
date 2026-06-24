@@ -4,6 +4,7 @@
 #include "ftxui/component/event.hpp"
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/screen/color.hpp"
+#include "ftxui/screen/terminal.hpp"
 
 #include <iomanip>
 #include <sstream>
@@ -42,7 +43,7 @@ ftxui::Component make_anomaly_panel(HookEngine& engine, bool& focused) {
             );
         } else {
             int total   = static_cast<int>(events.size());
-            int visible = 8;
+            int visible = std::max(2, ftxui::Terminal::Size().dimy - 30);
             *scroll     = std::clamp(*scroll, 0, std::max(0, total - visible));
             int start   = std::max(0, total - visible - *scroll);
             int end     = std::min(total, start + visible);

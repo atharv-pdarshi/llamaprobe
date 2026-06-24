@@ -4,6 +4,7 @@
 #include "ftxui/component/event.hpp"
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/screen/color.hpp"
+#include "ftxui/screen/terminal.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -60,7 +61,7 @@ ftxui::Component make_topology_panel(HookEngine& engine,
         flatten(*cached_tree, 0, flat);
 
         int total   = static_cast<int>(flat.size());
-        int visible = 14;
+        int visible = std::max(4, ftxui::Terminal::Size().dimy - 20);
         *cursor     = std::clamp(*cursor, 0, std::max(0, total - 1));
         int start   = std::max(0, *cursor - visible / 2);
         int end     = std::min(total, start + visible);
