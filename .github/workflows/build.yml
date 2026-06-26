@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04   # pin to 22.04 — matches dev env (GCC 11); avoid GCC 13 compat issues
 
     steps:
       - name: Checkout with submodules
@@ -19,7 +19,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential
+          sudo apt-get install -y \
+            cmake \
+            build-essential \
+            pkg-config \
+            libgomp-dev
 
       - name: Configure
         run: |
@@ -32,7 +36,11 @@ jobs:
             -DGGML_SYCL=OFF \
             -DGGML_HIP=OFF \
             -DGGML_OPENCL=OFF \
-            -DLLAMA_CURL=OFF
+            -DGGML_CCACHE=OFF \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=OFF
 
       - name: Build
         run: cmake --build build -j$(nproc)
