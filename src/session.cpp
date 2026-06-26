@@ -84,3 +84,49 @@ std::vector<LayerPacket> Session::load(const std::string& path) {
         out.push_back(json_to_packet(j));
     return out;
 }
+
+void Session::export_perfetto(const std::vector<LayerPacket>& packets,
+                               const std::string& path) {
+    json events = json::array();
+    for (const auto& p : packets) {
+        events.push_back({
+            {"name", p.layer_name},
+            {"ph",   "X"},
+            {"ts",   p.timestamp_us},
+            {"dur",  static_cast<uint64_t>(p.latency_ms * 1000.0f)},
+            {"pid",  0},
+            {"tid",  0},
+            {"args", {
+                {"sparsity", p.sparsity},
+                {"max",      p.max_val},
+            }},
+        });
+    }
+    json root;
+    root["traceEvents"] = std::move(events);
+
+    std::ofstream f(path);
+    if (!f) return;
+    f << root.dump(2) << "\n";
+}
+
+void Session::export_csv(const std::vector<LayerPacket>& packets,
+                          const std::string& path) {
+    std::ofstream f(path);
+    if (!f) return;
+    f << "id,timestamp_us,layer_name,type,device,dtype,"
+         "sparsity,mean,max_val,latency_ms,is_anomaly\n";
+    for (const auto& p : packets) {
+        f << p.id                      << ","
+          << p.timestamp_us            << ","
+          << p.layer_name              << ","
+          << layer_type_str(p.type)    << ","
+          << device_str(p.device)      << ","
+          << dtype_str(p.dtype)        << ","
+          << p.sparsity                << ","
+          << p.mean                    << ","
+          << p.max_val                 << ","
+          << p.latency_ms              << ","
+          << (p.is_anomaly ? "1" : "0") << "\n";
+    }
+}

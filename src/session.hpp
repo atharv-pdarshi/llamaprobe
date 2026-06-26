@@ -17,6 +17,12 @@ public:
     // Load a saved session and return all packets in order.
     static std::vector<LayerPacket> load(const std::string& path);
 
+    // Export helpers
+    static void export_perfetto(const std::vector<LayerPacket>& packets,
+                                 const std::string& path);
+    static void export_csv     (const std::vector<LayerPacket>& packets,
+                                 const std::string& path);
+
 private:
     bool                     recording_ = false;
     std::string              path_;

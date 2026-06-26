@@ -5,12 +5,15 @@
 #include "attention_panel.hpp"
 #include "metrics_panel.hpp"
 #include "anomaly_panel.hpp"
+#include "timeline_panel.hpp"
 
 #include "ftxui/component/component.hpp"
 #include "ftxui/component/screen_interactive.hpp"
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/screen/color.hpp"
 
+#include <memory>
+#include <optional>
 #include <thread>
 #include <chrono>
 #include <atomic>
@@ -37,8 +40,10 @@ static Element make_help_overlay() {
         row(" + / -",           " Increase / decrease contrast"),
         row(" H / L",           " Cycle attention head"),
         row(" R",               " Toggle session recording"),
-        row(" E",               " Export current buffer to JSON"),
+        row(" E",               " Export buffer to JSON + CSV + Perfetto"),
+        row(" C",               " Snapshot layer for comparison in Panel 4"),
         row(" P",               " Pause / resume live capture"),
+        row(" /",               " Filter Panel 2 by layer name"),
         row(" Q",               " Quit"),
         row(" ?",               " Toggle this help"),
         separator(),
@@ -46,12 +51,23 @@ static Element make_help_overlay() {
     }) | border | color(Color::Blue);
 }
 
-static void export_snapshot(HookEngine& engine, const std::string& path) {
-    Session tmp;
-    tmp.start_recording(path);
-    for (const auto& pkt : engine.packets.snapshot())
-        tmp.append(pkt);
-    tmp.stop_recording();
+static void export_snapshot(HookEngine& engine, const std::string& base_path) {
+    auto snap = engine.packets.snapshot();
+
+    // Write JSON session
+    {
+        Session tmp;
+        tmp.start_recording(base_path + ".json");
+        for (const auto& pkt : snap)
+            tmp.append(pkt);
+        tmp.stop_recording();
+    }
+
+    // Write CSV
+    Session::export_csv(snap, base_path + ".csv");
+
+    // Write Perfetto trace
+    Session::export_perfetto(snap, base_path + "_perfetto.json");
 }
 
 void run_tui(HookEngine& engine, const std::string& cli_record_path) {
@@ -65,28 +81,33 @@ void run_tui(HookEngine& engine, const std::string& cli_record_path) {
         engine.recording.store(true);
     }
 
-    int         focused        = 0;   // 0-4 for panels 1-5
+    int         focused        = 0;   // 0-5 for panels 1-6
     std::string selected_layer;       // set by Panel 1 Space key
     bool        paused         = false;
     bool        show_help      = false;
 
     // Per-panel focus flags — passed by ref into each panel
-    std::array<bool, 5> panel_focused = {true, false, false, false, false};
+    std::array<bool, 6> panel_focused = {true, false, false, false, false, false};
     auto update_focus = [&] {
-        for (int i = 0; i < 5; ++i) panel_focused[i] = (i == focused);
+        for (int i = 0; i < 6; ++i) panel_focused[i] = (i == focused);
     };
+
+    // Comparison snapshot for Panel 4 (C key)
+    auto compare_pkt = std::make_shared<std::optional<LayerPacket>>();
 
     // ── Build panels ──────────────────────────────────────────────────────────
     auto p1 = make_topology_panel (engine, panel_focused[0], selected_layer);
     auto p2 = make_stream_panel   (engine, panel_focused[1]);
     auto p3 = make_attention_panel(engine, panel_focused[2]);
-    auto p4 = make_metrics_panel  (engine, panel_focused[3], selected_layer);
+    auto p4 = make_metrics_panel  (engine, panel_focused[3], selected_layer, compare_pkt);
     auto p5 = make_anomaly_panel  (engine, panel_focused[4]);
+    auto p6 = make_timeline_panel (engine, panel_focused[5]);
 
     // ── Root layout ───────────────────────────────────────────────────────────
     // Row 1: Topology (left 30%) | Live Stream (right 70%)
     // Row 2: Attention Matrix (full width)
     // Row 3: Runtime Metrics (left 50%) | Anomaly Ledger (right 50%)
+    // Row 4: Per-Token Timeline (full width, compact)
 
     auto root = Renderer([&](bool) -> Element {
         // Status bar
@@ -113,7 +134,7 @@ void run_tui(HookEngine& engine, const std::string& cli_record_path) {
 
         std::string keyhint =
             " [Tab] Cycle Focus  [Space] Select Layer  "
-            "[P] Pause  [Q] Quit  [?] Help";
+            "[C] Compare  [P] Pause  [Q] Quit  [?] Help";
 
         Element status = hbox({
             text(sb.str())   | color(Color::Green) | bold,
@@ -133,12 +154,15 @@ void run_tui(HookEngine& engine, const std::string& cli_record_path) {
             p5->Render() | flex,
         });
 
+        Element row4 = p6->Render() | size(HEIGHT, LESS_THAN, 10);
+
         Element main = vbox({
             status,
             separator(),
             row1 | size(HEIGHT, LESS_THAN, 18),
             row2 | size(HEIGHT, LESS_THAN, 14),
             row3 | flex,
+            row4,
         });
 
         if (show_help) {
@@ -161,13 +185,13 @@ void run_tui(HookEngine& engine, const std::string& cli_record_path) {
         }
         // Tab — cycle panel focus
         if (e == Event::Tab || e == Event::Character('\t')) {
-            focused = (focused + 1) % 5;
+            focused = (focused + 1) % 6;
             update_focus();
             return true;
         }
         // Shift+Tab — reverse cycle
         if (e == Event::TabReverse) {
-            focused = (focused + 4) % 5;
+            focused = (focused + 5) % 6;
             update_focus();
             return true;
         }
@@ -198,19 +222,33 @@ void run_tui(HookEngine& engine, const std::string& cli_record_path) {
             }
             return true;
         }
-        // E — export current packet buffer to JSON
+        // E — export current packet buffer to JSON + CSV + Perfetto
         if (e == Event::Character('e') || e == Event::Character('E')) {
-            export_snapshot(engine, "session_export.json");
+            export_snapshot(engine, "session_export");
+            return true;
+        }
+        // C — snapshot current layer for comparison in Panel 4
+        if (e == Event::Character('c') || e == Event::Character('C')) {
+            if (!selected_layer.empty()) {
+                auto snap = engine.packets.snapshot();
+                for (int i = static_cast<int>(snap.size()) - 1; i >= 0; --i) {
+                    if (snap[i].layer_name == selected_layer) {
+                        *compare_pkt = snap[i];
+                        break;
+                    }
+                }
+            }
             return true;
         }
 
-        // Dispatch j/k/h/l/Space/H/L/+/- to the focused panel
+        // Dispatch j/k/h/l/Space/H/L/+/-// to the focused panel
         switch (focused) {
             case 0: return p1->OnEvent(e);
             case 1: return p2->OnEvent(e);
             case 2: return p3->OnEvent(e);
             case 3: return p4->OnEvent(e);
             case 4: return p5->OnEvent(e);
+            case 5: return p6->OnEvent(e);
         }
         return false;
     });

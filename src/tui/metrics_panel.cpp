@@ -5,18 +5,20 @@
 #include "ftxui/screen/color.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
+#include <memory>
+#include <optional>
 #include <sstream>
 
 using namespace ftxui;
 
-// Render a filled bar: "████░░░░░ 54.2%"
+// Render a filled bar: "████░░░░░ 54%"
 static Element sparsity_bar(float sparsity, int width = 16) {
     int filled = static_cast<int>(sparsity * width);
-    std::string bar(filled, '\xe2'); // approximate — actual block chars below
     std::string bar_str;
     for (int i = 0; i < width; ++i)
-        bar_str += (i < filled) ? "█" : "░";
+        bar_str += (i < filled) ? "\xe2\x96\x88" : "\xe2\x96\x91";
     bar_str += " " + std::to_string(static_cast<int>(sparsity * 100)) + "%";
 
     Color c = sparsity > 0.8f ? Color::Yellow :
@@ -33,10 +35,22 @@ static std::string shape_str(const std::vector<int64_t>& shape) {
     return s + "]";
 }
 
+// Format a signed percentage delta with sign
+static std::string fmt_pct(float old_val, float new_val) {
+    if (std::fabs(old_val) < 1e-9f) return "(n/a)";
+    float pct = (new_val - old_val) / std::fabs(old_val) * 100.f;
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(0);
+    if (pct >= 0) oss << "(+" << pct << "%)";
+    else          oss << "(" << pct << "%)";
+    return oss.str();
+}
+
 ftxui::Component make_metrics_panel(HookEngine& engine,
                                      bool& focused,
-                                     const std::string& selected_layer) {
-    return Renderer([&engine, &focused, &selected_layer]() -> Element {
+                                     const std::string& selected_layer,
+                                     std::shared_ptr<std::optional<LayerPacket>> compare) {
+    return Renderer([&engine, &focused, &selected_layer, compare]() -> Element {
         // Find the most recent packet for the selected layer
         LayerPacket pkt{};
         bool found = false;
@@ -81,6 +95,78 @@ ftxui::Component make_metrics_panel(HookEngine& engine,
                 }),
                 hbox({ text("Device  : ") | bold, text(device_str(pkt.device)) }),
             };
+
+            // Comparison section (C key)
+            if (compare && compare->has_value()) {
+                const LayerPacket& cmp = compare->value();
+
+                rows.push_back(separator());
+                rows.push_back(text("── Comparison (C to update) ──") | color(Color::GrayLight));
+
+                // Latency comparison
+                {
+                    float old_v = cmp.latency_ms;
+                    float new_v = pkt.latency_ms;
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(2)
+                        << old_v << "ms → " << new_v << "ms  "
+                        << fmt_pct(old_v, new_v);
+                    bool worse = new_v > old_v;
+                    Color dc = worse ? Color::Red : Color::Green;
+                    rows.push_back(hbox({
+                        text("Latency : ") | bold,
+                        text(oss.str()) | color(dc),
+                        text(worse ? " ⚠" : "") | color(Color::Yellow),
+                    }));
+                }
+                // Sparsity comparison
+                {
+                    float old_v = cmp.sparsity;
+                    float new_v = pkt.sparsity;
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(0)
+                        << (old_v * 100.f) << "% → " << (new_v * 100.f) << "%  "
+                        << fmt_pct(old_v, new_v);
+                    bool worse = new_v > old_v;  // higher sparsity may be a concern
+                    Color dc = worse ? Color::Red : Color::Green;
+                    rows.push_back(hbox({
+                        text("Sparsity: ") | bold,
+                        text(oss.str()) | color(dc),
+                        text(worse ? " ⚠" : "") | color(Color::Yellow),
+                    }));
+                }
+                // Max activation comparison
+                {
+                    float old_v = cmp.max_val;
+                    float new_v = pkt.max_val;
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(2)
+                        << old_v << " → " << new_v << "  "
+                        << fmt_pct(old_v, new_v);
+                    bool worse = new_v > old_v;
+                    Color dc = worse ? Color::Red : Color::Green;
+                    rows.push_back(hbox({
+                        text("Max     : ") | bold,
+                        text(oss.str()) | color(dc),
+                        text(worse ? " ✖" : "") | color(Color::Red),
+                    }));
+                }
+                // Mean comparison
+                {
+                    float old_v = cmp.mean;
+                    float new_v = pkt.mean;
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(4)
+                        << old_v << " → " << new_v << "  "
+                        << fmt_pct(old_v, new_v);
+                    bool worse = std::fabs(new_v) > std::fabs(old_v);
+                    Color dc = worse ? Color::Red : Color::Green;
+                    rows.push_back(hbox({
+                        text("Mean    : ") | bold,
+                        text(oss.str()) | color(dc),
+                    }));
+                }
+            }
         }
 
         auto bcolor = focused ? Color::Cyan : Color::GrayDark;

@@ -1,0 +1,16 @@
+# llamaprobe configuration — all values are overridden by CLI flags
+
+[model]
+# path = "models/tinyllama.gguf"
+prompt = "Explain the transformer attention mechanism."
+n_predict = 128
+threads = 4
+n_gpu_layers = 0
+
+[anomaly]
+max_activation = 6.0
+sparsity_threshold = 0.80
+latency_mult = 3.0
+
+[record]
+# path = "sessions/auto.json"

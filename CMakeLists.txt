@@ -26,12 +26,14 @@ set(SOURCES
     src/anomaly_detector.cpp
     src/topology.cpp
     src/session.cpp
+    src/config.cpp
     src/tui/app.cpp
     src/tui/topology_panel.cpp
     src/tui/stream_panel.cpp
     src/tui/attention_panel.cpp
     src/tui/metrics_panel.cpp
     src/tui/anomaly_panel.cpp
+    src/tui/timeline_panel.cpp
 )
 
 add_executable(llamaprobe ${SOURCES})

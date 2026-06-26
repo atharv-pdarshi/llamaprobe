@@ -22,6 +22,7 @@ public:
     RingBuffer<LayerPacket,     512> packets;
     RingBuffer<AttentionCapture, 32> attention;
     RingBuffer<AnomalyEvent,    128> anomalies;
+    RingBuffer<TokenTiming,     512> token_timings;
 
     // ── Setup ─────────────────────────────────────────────────────────────────
 

@@ -36,14 +36,45 @@ static std::string format_ts(uint64_t us) {
 }
 
 ftxui::Component make_stream_panel(HookEngine& engine, bool& focused) {
-    // Scroll offset — j/k move it
-    auto scroll = std::make_shared<int>(0);
+    auto scroll      = std::make_shared<int>(0);
+    auto filter_str  = std::make_shared<std::string>("");
+    auto filter_mode = std::make_shared<bool>(false);
 
-    return Renderer([&engine, &focused, scroll]() -> Element {
-        auto packets = engine.packets.snapshot();
+    return Renderer([&engine, &focused, scroll, filter_str, filter_mode]() -> Element {
+        auto all_packets = engine.packets.snapshot();
+
+        // Apply filter
+        std::vector<LayerPacket> packets;
+        if (filter_str->empty()) {
+            packets = std::move(all_packets);
+        } else {
+            for (const auto& p : all_packets) {
+                if (p.layer_name.find(*filter_str) != std::string::npos)
+                    packets.push_back(p);
+            }
+        }
+
+        // Build title with optional filter indicator
+        std::string title = "── 2. LIVE PACKET STREAM";
+        if (!filter_str->empty()) {
+            title += " [filter: " + *filter_str + "]";
+        }
+
+        auto border_color = focused ? Color::Cyan : Color::GrayDark;
+
+        Elements rows;
+
+        // Filter bar
+        if (*filter_mode) {
+            rows.push_back(hbox({
+                text("[/] Filter: ") | color(Color::Yellow),
+                text(*filter_str)   | color(Color::White),
+                text("\xe2\x96\x88") | color(Color::Cyan),  // cursor block
+            }));
+            rows.push_back(separator());
+        }
 
         // Header row
-        Elements rows;
         rows.push_back(
             hbox({
                 text(" ID   ") | bold,
@@ -92,15 +123,41 @@ ftxui::Component make_stream_panel(HookEngine& engine, bool& focused) {
             );
         }
 
-        auto title = std::string("── 2. LIVE PACKET STREAM");
-        auto border_color = focused ? Color::Cyan : Color::GrayDark;
-
         return window(
             text(title) | color(border_color),
             vbox(std::move(rows)) | flex
         );
     })
-    | CatchEvent([scroll](Event e) -> bool {
+    | CatchEvent([scroll, filter_str, filter_mode](Event e) -> bool {
+        // '/' enters filter mode
+        if (e == Event::Character('/')) {
+            *filter_mode = true;
+            return true;
+        }
+        // Esc exits filter mode and clears filter
+        if (e == Event::Escape) {
+            if (*filter_mode) {
+                *filter_mode = false;
+                filter_str->clear();
+                return true;
+            }
+            return false;
+        }
+        // Backspace removes last char in filter mode
+        if (*filter_mode && e == Event::Backspace) {
+            if (!filter_str->empty())
+                filter_str->pop_back();
+            return true;
+        }
+        // Printable characters append to filter in filter mode
+        if (*filter_mode && e.is_character()) {
+            char c = e.character()[0];
+            if (c >= 32 && c < 127) {
+                *filter_str += c;
+                return true;
+            }
+        }
+        // j/k scroll (works regardless of filter mode)
         if (e == Event::Character('j')) { (*scroll)--; return true; }
         if (e == Event::Character('k')) { (*scroll)++; return true; }
         return false;

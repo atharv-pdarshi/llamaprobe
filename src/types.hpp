@@ -67,6 +67,15 @@ struct AttentionCapture {
     uint64_t    timestamp_us;
 };
 
+// ── Per-token timing (populated in main generation loop) ─────────────────────
+
+struct TokenTiming {
+    uint32_t    token_idx;
+    std::string token_str;    // decoded text of the token
+    float       duration_ms;  // wall time for this token's decode call
+    uint64_t    timestamp_us; // microseconds since inference start
+};
+
 // ── Anomaly event written by AnomalyDetector ─────────────────────────────────
 
 struct AnomalyEvent {

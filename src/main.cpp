@@ -2,6 +2,7 @@
 #include "types.hpp"
 #include "tui/app.hpp"
 #include "session.hpp"
+#include "config.hpp"
 
 #include "llama.h"
 #include "ggml.h"
@@ -12,6 +13,7 @@
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <chrono>
 
 // ── CLI argument parsing ──────────────────────────────────────────────────────
 
@@ -21,16 +23,38 @@ struct Args {
     int         n_predict    = 128;
     int         n_ctx        = 2048;
     int         n_threads    = 4;
+    int         n_gpu_layers = 0;
     bool        tui_enabled  = true;   // false = just dump packets to stdout (debug)
     std::string replay_path;           // --replay <session.json>
     std::string record_path;           // --record <path>  (empty = no auto-record)
+    std::string config_path;           // --config <path>  (default: llamaprobe.toml)
     float       thresh_max_activation = 6.0f;
     float       thresh_sparsity       = 0.80f;
     float       thresh_latency_mult   = 3.0f;
 };
 
-static Args parse_args(int argc, char** argv) {
+static Args parse_args(int argc, char** argv, const Config& cfg) {
+    // Start with config-file defaults (CLI overrides these below)
     Args a;
+    if (cfg.has("model", "path"))
+        a.model_path = cfg.get_string("model", "path");
+    if (cfg.has("model", "prompt"))
+        a.prompt = cfg.get_string("model", "prompt");
+    if (cfg.has("model", "n_predict"))
+        a.n_predict = cfg.get_int("model", "n_predict", 128);
+    if (cfg.has("model", "threads"))
+        a.n_threads = cfg.get_int("model", "threads", 4);
+    if (cfg.has("model", "n_gpu_layers"))
+        a.n_gpu_layers = cfg.get_int("model", "n_gpu_layers", 0);
+    if (cfg.has("anomaly", "max_activation"))
+        a.thresh_max_activation = cfg.get_float("anomaly", "max_activation", 6.0f);
+    if (cfg.has("anomaly", "sparsity_threshold"))
+        a.thresh_sparsity = cfg.get_float("anomaly", "sparsity_threshold", 0.80f);
+    if (cfg.has("anomaly", "latency_mult"))
+        a.thresh_latency_mult = cfg.get_float("anomaly", "latency_mult", 3.0f);
+    if (cfg.has("record", "path"))
+        a.record_path = cfg.get_string("record", "path");
+
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--model") == 0 && i + 1 < argc)
             a.model_path = argv[++i];
@@ -40,6 +64,8 @@ static Args parse_args(int argc, char** argv) {
             a.n_predict = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--threads") == 0 && i + 1 < argc)
             a.n_threads = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--n-gpu-layers") == 0 && i + 1 < argc)
+            a.n_gpu_layers = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--no-tui") == 0)
             a.tui_enabled = false;
         else if (std::strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
@@ -48,6 +74,8 @@ static Args parse_args(int argc, char** argv) {
         }
         else if (std::strcmp(argv[i], "--record") == 0 && i + 1 < argc)
             a.record_path = argv[++i];
+        else if (std::strcmp(argv[i], "--config") == 0 && i + 1 < argc)
+            a.config_path = argv[++i];
         else if (std::strcmp(argv[i], "--max-activation") == 0 && i + 1 < argc)
             a.thresh_max_activation = static_cast<float>(std::atof(argv[++i]));
         else if (std::strcmp(argv[i], "--sparsity-threshold") == 0 && i + 1 < argc)
@@ -82,13 +110,28 @@ static void dump_packets(HookEngine& engine, std::atomic<bool>& running) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
-    Args args = parse_args(argc, argv);
+    // Determine config path from CLI first pass (look for --config before full parse)
+    std::string config_path = "llamaprobe.toml";
+    for (int i = 1; i < argc - 1; ++i) {
+        if (std::strcmp(argv[i], "--config") == 0) {
+            config_path = argv[i + 1];
+            break;
+        }
+    }
+
+    // Load config (silently ignore if not found)
+    Config cfg;
+    cfg.load(config_path);
+
+    Args args = parse_args(argc, argv, cfg);
 
     if (args.model_path.empty() && args.replay_path.empty()) {
         std::fprintf(stderr,
             "Usage: llamaprobe --model <path.gguf> [--prompt <text>]\n"
             "                  [--n-predict N] [--threads N] [--no-tui]\n"
+            "                  [--n-gpu-layers N]\n"
             "                  [--record <path.json>]\n"
+            "                  [--config <path.toml>]\n"
             "                  [--max-activation F] [--sparsity-threshold F] [--latency-mult F]\n"
             "       llamaprobe --replay <session.json>\n");
         return 1;
@@ -136,7 +179,7 @@ int main(int argc, char** argv) {
     llama_backend_init();
 
     llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 0;   // CPU-only
+    mparams.n_gpu_layers = args.n_gpu_layers;
 
     llama_model* model = llama_model_load_from_file(args.model_path.c_str(), mparams);
     if (!model) {
@@ -200,6 +243,7 @@ int main(int argc, char** argv) {
 
     // ── Run inference ─────────────────────────────────────────────────────────
     engine.begin_inference();
+    auto inference_start = engine.inference_start;  // capture for token timing
 
     llama_batch batch = llama_batch_get_one(tokens_ids.data(), n_tokens);
     if (llama_decode(ctx, batch) != 0) {
@@ -218,7 +262,23 @@ int main(int argc, char** argv) {
         if (!args.tui_enabled) std::printf("%s", buf);
 
         batch = llama_batch_get_one(&new_tok, 1);
+
+        // Measure per-token decode time
+        auto tok_start = std::chrono::steady_clock::now();
         if (llama_decode(ctx, batch) != 0) break;
+        auto tok_end = std::chrono::steady_clock::now();
+
+        float tok_ms = std::chrono::duration<float, std::milli>(tok_end - tok_start).count();
+
+        TokenTiming tt;
+        tt.token_idx   = static_cast<uint32_t>(i);
+        tt.token_str   = buf;
+        tt.duration_ms = tok_ms;
+        tt.timestamp_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                tok_start - inference_start).count());
+        engine.token_timings.push(tt);
+
         engine.token_count.fetch_add(1);
     }
     if (!args.tui_enabled) std::printf("\n");
