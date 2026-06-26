@@ -22,7 +22,17 @@ jobs:
           sudo apt-get install -y cmake build-essential
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_CUDA=OFF \
+            -DGGML_METAL=OFF \
+            -DGGML_VULKAN=OFF \
+            -DGGML_SYCL=OFF \
+            -DGGML_HIP=OFF \
+            -DGGML_OPENCL=OFF \
+            -DLLAMA_CURL=OFF
 
       - name: Build
         run: cmake --build build -j$(nproc)
