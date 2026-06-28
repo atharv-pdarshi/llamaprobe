@@ -108,14 +108,12 @@ bool HookEngine::should_capture(const struct ggml_tensor* t) const {
     if (!t) return false;
     const char* name = ggml_get_name(t);
     if (!name || name[0] == '\0') return false;
-    // Skip weight tensors — we only want activation outputs
+    // Skip weight/bias tensors — we want activation outputs only
     if (std::strstr(name, ".weight")) return false;
     if (std::strstr(name, ".bias"))   return false;
-    // Only capture named layer outputs, not intermediate scratch tensors
-    return std::strstr(name, "blk.")      ||
-           std::strstr(name, "token_embd") ||
-           std::strstr(name, "result_norm") ||
-           std::strstr(name, "output");
+    // Only capture floating-point activations; quantized tensors are weights
+    if (t->type != GGML_TYPE_F32 && t->type != GGML_TYPE_F16) return false;
+    return true;
 }
 
 LayerType HookEngine::classify_layer(const char* name) const {

@@ -189,8 +189,9 @@ int main(int argc, char** argv) {
 
     // ── Create context with hook installed ────────────────────────────────────
     llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx      = args.n_ctx;
-    cparams.n_threads  = args.n_threads;
+    cparams.n_ctx        = args.n_ctx;
+    cparams.n_threads    = args.n_threads;
+    cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;  // keep softmax tensor visible for Panel 3
     HookEngine::install(cparams, &engine);
 
     llama_context* ctx = llama_new_context_with_model(model, cparams);
@@ -252,7 +253,8 @@ int main(int argc, char** argv) {
 
     // Generate tokens
     llama_sampler* smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
+    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.8f));
+    llama_sampler_chain_add(smpl, llama_sampler_init_dist(42));
 
     for (int i = 0; i < args.n_predict; ++i) {
         llama_token new_tok = llama_sampler_sample(smpl, ctx, -1);
