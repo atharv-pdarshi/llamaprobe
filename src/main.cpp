@@ -251,10 +251,11 @@ int main(int argc, char** argv) {
     }
 
     // Generate tokens
+    llama_sampler* smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
+
     for (int i = 0; i < args.n_predict; ++i) {
-        llama_token new_tok = llama_sampler_sample(
-            llama_sampler_chain_init(llama_sampler_chain_default_params()),
-            ctx, -1);
+        llama_token new_tok = llama_sampler_sample(smpl, ctx, -1);
 
         if (llama_vocab_is_eog(vocab, new_tok)) break;
 
@@ -282,6 +283,7 @@ int main(int argc, char** argv) {
         engine.token_count.fetch_add(1);
     }
     if (!args.tui_enabled) std::printf("\n");
+    llama_sampler_free(smpl);
 
     // ── Shutdown ──────────────────────────────────────────────────────────────
     running = false;
