@@ -34,6 +34,9 @@ void HookEngine::begin_inference() {
 // ── Core capture ──────────────────────────────────────────────────────────────
 
 void HookEngine::on_tensor(const struct ggml_tensor* t) {
+    // During llama.cpp's sched_reserve dry-run, tensors have no data yet.
+    // Skip them — we only want tensors from real inference passes.
+    if (!t || !t->data) return;
     if (!should_capture(t)) return;
 
     const char* name = ggml_get_name(t);
