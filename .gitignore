@@ -1,6 +1,9 @@
 build/
+build_ci/
 models/
 sessions/
 *.gguf
 .DS_Store
 llm_tracing_plan.md
+.claude/
+session_export*

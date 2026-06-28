@@ -4,6 +4,7 @@
 #include "ftxui/component/event.hpp"
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/screen/color.hpp"
+#include "ftxui/screen/terminal.hpp"
 
 #include <algorithm>
 #include <iomanip>
@@ -12,9 +13,16 @@
 
 using namespace ftxui;
 
-static std::string pad_left(const std::string& s, int width) {
-    if (static_cast<int>(s.size()) >= width) return s.substr(0, width);
-    return std::string(width - static_cast<int>(s.size()), ' ') + s;
+// Strip SentencePiece ▁ (U+2581 = 0xe2 0x96 0x81) then pad/truncate to `width` visual chars.
+// After stripping, remaining chars are ASCII so byte count == visual width.
+static std::string token_label(const std::string& s, int width) {
+    std::string t = s;
+    while (t.size() >= 3 &&
+           (uint8_t)t[0] == 0xe2 && (uint8_t)t[1] == 0x96 && (uint8_t)t[2] == 0x81)
+        t = t.substr(3);
+    if (t.empty()) t = " ";
+    if ((int)t.size() >= width) return t.substr(0, width);
+    return std::string(width - (int)t.size(), ' ') + t;
 }
 
 ftxui::Component make_timeline_panel(HookEngine& engine, bool& focused) {
@@ -46,7 +54,7 @@ ftxui::Component make_timeline_panel(HookEngine& engine, bool& focused) {
 
         // Clamp scroll
         int total   = static_cast<int>(timings.size());
-        int visible = std::max(3, 8);  // fixed visible rows in the compact panel
+        int visible = std::max(3, ftxui::Terminal::Size().dimy - 38);
         *scroll = std::clamp(*scroll, 0, std::max(0, total - visible));
         int start = *scroll;
         int end   = std::min(total, start + visible);
@@ -55,8 +63,8 @@ ftxui::Component make_timeline_panel(HookEngine& engine, bool& focused) {
         for (int i = start; i < end; ++i) {
             const auto& tt = timings[i];
 
-            // Label: left-pad token string to label_width
-            std::string label = pad_left(tt.token_str, label_width);
+            // Label: strip ▁ prefix, then right-pad to label_width (all ASCII after strip)
+            std::string label = token_label(tt.token_str, label_width);
 
             // Bar: scale to bar_width
             int filled = (max_dur > 0.f)

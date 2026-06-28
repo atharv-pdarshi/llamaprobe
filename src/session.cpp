@@ -5,16 +5,20 @@
 
 using json = nlohmann::json;
 
-// Serialize one LayerPacket to a json object
+// Serialize one LayerPacket to a json object.
+// Enums are stored as both int (for round-trip replay) and string (for readability).
 static json packet_to_json(const LayerPacket& p) {
     return {
         {"id",           p.id},
         {"timestamp_us", p.timestamp_us},
         {"layer_name",   p.layer_name},
         {"type",         static_cast<int>(p.type)},
+        {"type_str",     layer_type_str(p.type)},
         {"device",       static_cast<int>(p.device)},
+        {"device_str",   device_str(p.device)},
         {"shape",        p.shape},
         {"dtype",        static_cast<int>(p.dtype)},
+        {"dtype_str",    dtype_str(p.dtype)},
         {"sparsity",     p.sparsity},
         {"mean",         p.mean},
         {"max_val",      p.max_val},

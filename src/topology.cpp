@@ -1,25 +1,43 @@
 #include "topology.hpp"
 #include <algorithm>
+#include <cctype>
 #include <map>
-#include <sstream>
 
-// Classify a layer name into a LayerType
+// Classify an activation tensor name into a LayerType.
+// llama.cpp names activations like: Qcur-3, Kcur-3, ffn_gate-3, result_norm
 static LayerType classify(const std::string& name) {
-    if (name.find("token_embd") != std::string::npos) return LayerType::Embedding;
-    if (name.find("attn_norm")  != std::string::npos ||
-        name.find("ffn_norm")   != std::string::npos ||
-        name.find("result_norm")!= std::string::npos) return LayerType::LayerNorm;
-    if (name.find("attn")       != std::string::npos) return LayerType::Attention;
-    if (name.find("ffn")        != std::string::npos) return LayerType::MLP;
-    if (name.find("output")     != std::string::npos) return LayerType::Output;
+    auto has = [&](const char* s) { return name.find(s) != std::string::npos; };
+
+    if (has("token_embd") || has("inp_embd"))   return LayerType::Embedding;
+
+    // Normalization — must come before attn/ffn because "attn_norm" contains "attn".
+    // Matches attn_norm, ffn_norm, result_norm, _norm, and bare "norm-N"
+    if (has("norm"))                             return LayerType::LayerNorm;
+
+    // Attention: Qcur, Kcur, Vcur, kq*, kqv*, inpSA, attn*, KV cache views
+    if (has("Qcur")    || has("Kcur")    || has("Vcur") ||
+        has("kqv")     || has("kq")      ||
+        has("cache_k") || has("cache_v") ||
+        has("inpSA")   || has("attn"))           return LayerType::Attention;
+
+    // MLP/FFN: ffn_inp, ffn_gate, ffn_up, ffn_down, inpFF
+    if (has("ffn") || has("mlp") || has("inpFF")) return LayerType::MLP;
+
+    if (has("output") || has("lm_head"))         return LayerType::Output;
     return LayerType::Other;
 }
 
-// Parse "blk.3.attn_q" → prefix="blk.3", leaf="attn_q"
-static std::pair<std::string, std::string> split_name(const std::string& name) {
-    auto dot = name.rfind('.');
-    if (dot == std::string::npos) return {"", name};
-    return {name.substr(0, dot), name.substr(dot + 1)};
+// Parse "Kcur-5" → ("Kcur", 5).  Returns layer=-1 if no numeric suffix found.
+static std::pair<std::string, int> parse_name(const std::string& name) {
+    auto dash = name.rfind('-');
+    if (dash != std::string::npos && dash + 1 < name.size()) {
+        const std::string suffix = name.substr(dash + 1);
+        if (!suffix.empty() &&
+            std::all_of(suffix.begin(), suffix.end(), ::isdigit)) {
+            return {name.substr(0, dash), std::stoi(suffix)};
+        }
+    }
+    return {name, -1};
 }
 
 LayerNode build_topology(const std::vector<std::string>& layer_names,
@@ -29,61 +47,80 @@ LayerNode build_topology(const std::vector<std::string>& layer_names,
     root.type     = LayerType::Other;
     root.expanded = true;
 
-    // Group layer names by their parent prefix
-    // e.g. "blk.0.attn_q" → parent "blk.0", leaf "attn_q"
-    // "blk.0" → parent "blk", leaf "0"
+    // Deduplicate
+    std::vector<std::string> names = layer_names;
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
 
-    // Collect unique prefixes first
-    std::vector<std::string> unique_names = layer_names;
-    std::sort(unique_names.begin(), unique_names.end());
-    unique_names.erase(std::unique(unique_names.begin(), unique_names.end()),
-                       unique_names.end());
+    // Buckets: global tensors (no layer number) and per-layer tensors
+    std::vector<std::string>              global_tensors;
+    std::map<int, std::vector<std::string>> per_layer;  // layer_idx → [names]
 
-    // Two-level grouping: group → block → leaf
-    // group = "blk", "token_embd", "output"
-    std::map<std::string, std::map<std::string, std::vector<std::string>>>
-        groups;  // group → block → [leaves]
-
-    for (const auto& n : unique_names) {
-        auto [prefix, leaf] = split_name(n);
-        if (prefix.empty()) {
-            groups[""][n] = {};
-        } else {
-            auto [group, block] = split_name(prefix);
-            if (group.empty()) groups[prefix][leaf].push_back(n);
-            else               groups[group][block].push_back(n);
-        }
+    for (const auto& n : names) {
+        auto [base, layer] = parse_name(n);
+        if (layer < 0) global_tensors.push_back(n);
+        else            per_layer[layer].push_back(n);
     }
 
-    for (auto& [grp_name, blocks] : groups) {
-        LayerNode grp_node;
-        grp_node.name     = grp_name.empty() ? "misc" : grp_name;
-        grp_node.type     = LayerType::Other;
-        grp_node.expanded = grp_name == "blk";  // expand blk by default
-
-        for (auto& [blk_name, leaves] : blocks) {
-            if (leaves.empty()) {
-                // It's a leaf itself
-                LayerNode leaf_node;
-                leaf_node.name = blk_name;
-                leaf_node.type = classify(blk_name);
-                grp_node.children.push_back(std::move(leaf_node));
-                continue;
-            }
-            LayerNode blk_node;
-            blk_node.name     = blk_name;
-            blk_node.type     = LayerType::Other;
-            blk_node.expanded = false;
-
-            for (const auto& lname : leaves) {
-                LayerNode leaf;
-                leaf.name = lname;
-                leaf.type = classify(lname);
-                blk_node.children.push_back(std::move(leaf));
-            }
-            grp_node.children.push_back(std::move(blk_node));
-        }
-        root.children.push_back(std::move(grp_node));
+    // ── Global tensors → split into embedding / output / misc ────────────────
+    std::vector<std::string> embd_list, output_list, misc_list;
+    for (const auto& n : global_tensors) {
+        LayerType t = classify(n);
+        if (t == LayerType::Embedding) embd_list.push_back(n);
+        else if (t == LayerType::Output || t == LayerType::LayerNorm)
+            output_list.push_back(n);
+        else misc_list.push_back(n);
     }
+
+    auto make_leaf_group = [](const std::string& gname,
+                               LayerType gtype,
+                               const std::vector<std::string>& items) -> LayerNode {
+        LayerNode g;
+        g.name     = gname;
+        g.type     = gtype;
+        g.expanded = false;
+        for (const auto& n : items) {
+            LayerNode leaf;
+            leaf.name = n;
+            leaf.type = classify(n);
+            g.children.push_back(std::move(leaf));
+        }
+        return g;
+    };
+
+    if (!embd_list.empty())
+        root.children.push_back(make_leaf_group("embedding", LayerType::Embedding, embd_list));
+
+    // ── Per-layer groups ──────────────────────────────────────────────────────
+    for (auto& [idx, tensors] : per_layer) {
+        LayerNode layer_node;
+        layer_node.name     = "layer-" + std::to_string(idx);
+        layer_node.type     = LayerType::Other;
+        layer_node.expanded = false;
+
+        // Sort tensors within the layer: Attention first, then MLP, then rest
+        std::sort(tensors.begin(), tensors.end(), [](const std::string& a, const std::string& b) {
+            int ra = (classify(a) == LayerType::Attention) ? 0 :
+                     (classify(a) == LayerType::MLP)       ? 1 : 2;
+            int rb = (classify(b) == LayerType::Attention) ? 0 :
+                     (classify(b) == LayerType::MLP)       ? 1 : 2;
+            if (ra != rb) return ra < rb;
+            return a < b;
+        });
+
+        for (const auto& n : tensors) {
+            LayerNode leaf;
+            leaf.name = n;
+            leaf.type = classify(n);
+            layer_node.children.push_back(std::move(leaf));
+        }
+        root.children.push_back(std::move(layer_node));
+    }
+
+    if (!output_list.empty())
+        root.children.push_back(make_leaf_group("output", LayerType::Output, output_list));
+    if (!misc_list.empty())
+        root.children.push_back(make_leaf_group("misc", LayerType::Other, misc_list));
+
     return root;
 }

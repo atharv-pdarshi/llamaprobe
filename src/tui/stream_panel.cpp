@@ -77,13 +77,15 @@ ftxui::Component make_stream_panel(HookEngine& engine, bool& focused) {
         // Header row
         rows.push_back(
             hbox({
-                text(" ID   ") | bold,
+                text(" ID   ")         | bold,
                 separator(),
-                text(" TIMESTAMP ") | bold,
+                text(" TIME    ")      | bold,
                 separator(),
-                text(" LAYER TYPE    ") | bold,
+                text(" LAYER NAME           ") | bold,
                 separator(),
-                text(" DEVICE         ") | bold,
+                text(" TYPE          ")  | bold,
+                separator(),
+                text(" DEVICE  ")      | bold,
             }) | color(Color::White)
         );
         rows.push_back(separator());
@@ -100,6 +102,14 @@ ftxui::Component make_stream_panel(HookEngine& engine, bool& focused) {
             bool anomaly  = p.is_anomaly;
             Color c       = anomaly ? Color::Red : layer_color(p.type);
 
+            // Truncate layer name to 20 chars for column alignment
+            std::string lname = p.layer_name;
+            if ((int)lname.size() > 20) lname = lname.substr(0, 19) + ".";
+            lname += std::string(std::max(0, 20 - (int)lname.size()), ' ');
+
+            std::string type_s = std::string(layer_type_str(p.type));
+            type_s += std::string(std::max(0, 13 - (int)type_s.size()), ' ');
+
             rows.push_back(
                 hbox({
                     text(" " + std::to_string(p.id)) | color(c),
@@ -107,9 +117,9 @@ ftxui::Component make_stream_panel(HookEngine& engine, bool& focused) {
                     separator(),
                     text(" " + format_ts(p.timestamp_us) + " ") | color(Color::GrayLight),
                     separator(),
-                    text(" " + std::string(layer_type_str(p.type))
-                         + std::string(std::max(0, 13 - (int)strlen(layer_type_str(p.type))), ' ')
-                         + " ") | color(c),
+                    text(" " + lname + " ")  | color(c),
+                    separator(),
+                    text(" " + type_s + " ") | color(c),
                     separator(),
                     text(" " + std::string(device_str(p.device)) + " ")
                         | color(Color::GrayLight),

@@ -118,13 +118,29 @@ bool HookEngine::should_capture(const struct ggml_tensor* t) const {
 
 LayerType HookEngine::classify_layer(const char* name) const {
     if (!name) return LayerType::Other;
-    if (std::strstr(name, "token_embd"))               return LayerType::Embedding;
-    if (std::strstr(name, "attn_norm") ||
-        std::strstr(name, "ffn_norm")  ||
-        std::strstr(name, "result_norm")) return LayerType::LayerNorm;
-    if (std::strstr(name, "attn"))                     return LayerType::Attention;
-    if (std::strstr(name, "ffn") || std::strstr(name, "mlp")) return LayerType::MLP;
-    if (std::strstr(name, "output"))                   return LayerType::Output;
+    // Embedding
+    if (std::strstr(name, "token_embd") ||
+        std::strstr(name, "inp_embd"))              return LayerType::Embedding;
+    // Normalization (check before attn/ffn because attn_norm contains "attn").
+    // Matches: attn_norm, ffn_norm, result_norm, _norm, and bare "norm-N"
+    if (std::strstr(name, "norm"))                  return LayerType::LayerNorm;
+    // Attention — covers Qcur, Kcur, Vcur, kq*, kqv*, attn*, inpSA, KV cache views
+    if (std::strstr(name, "Qcur")    ||
+        std::strstr(name, "Kcur")    ||
+        std::strstr(name, "Vcur")    ||
+        std::strstr(name, "kqv")     ||
+        std::strstr(name, "kq")      ||
+        std::strstr(name, "cache_k") ||
+        std::strstr(name, "cache_v") ||
+        std::strstr(name, "inpSA")   ||
+        std::strstr(name, "attn"))                  return LayerType::Attention;
+    // MLP/FFN — covers ffn_inp, ffn_up, ffn_gate, ffn_down, ffn_out, inpFF
+    if (std::strstr(name, "ffn")   ||
+        std::strstr(name, "mlp")   ||
+        std::strstr(name, "inpFF"))                 return LayerType::MLP;
+    // Output
+    if (std::strstr(name, "output") ||
+        std::strstr(name, "lm_head"))               return LayerType::Output;
     return LayerType::Other;
 }
 
