@@ -1,147 +1,358 @@
 # llamaprobe
 
-A C++ diagnostic tool that non-invasively hooks into local LLM inference via llama.cpp, captures real-time intermediate states (activations, layer latencies, attention matrices, anomalies), and presents everything in an interactive 5-panel terminal UI.
+A C++17 real-time diagnostic tool that non-invasively hooks into local LLM inference via **llama.cpp**, captures intermediate tensor states (activations, attention weights, layer latencies, anomalies, per-token timing), and presents everything in a live **6-panel interactive terminal UI**.
+
+[![CI](https://github.com/atharv-pdarshi/llamaprobe/actions/workflows/build.yml/badge.svg)](https://github.com/atharv-pdarshi/llamaprobe/actions/workflows/build.yml)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey.svg)](#build)
+[![Backend](https://img.shields.io/badge/backend-llama.cpp-orange.svg)](https://github.com/ggml-org/llama.cpp)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ```
- [Tab] Cycle Focus  [Space] Select Layer  [P] Pause  [Q] Quit  [?] Help
-╔══ 1. MODEL TOPOLOGY ════════════╗┌── 2. LIVE PACKET STREAM ──────────────────────┐
-║ ▼ tinyllama                     ║│  ID   │ TIMESTAMP │ LAYER TYPE    │ DEVICE    │
-║   ● token_embd                  ║├───────┼───────────┼───────────────┼───────────┤
-║   ▼ blk                         ║│  104  │ 00.110    │ Attn (Self)   │ CPU       │
-║    ▼ 0  [Active Target]         ║│  105  │ 00.114    │ MLP (SwiGLU)  │ CPU       │
-║      ● 0.attn_norm              ║│  106  │ 00.119    │ LayerNorm     │ CPU       │
-║      ● 0.attn                   ║│  107  │ 00.122    │ MLP (SwiGLU)  │ CPU       │
-║      ● 0.ffn_norm               ║└───────┴───────────┴───────────────┴───────────┘
-╚════════════ [j/k Navigate] ═════╝
-┌── 3. ATTENTION MATRIX VISUALIZER (HEAD 0) ────────────────────────────────────────┐
-│        [the]  [cat]  [sat]  [on]  [mat]                                           │
-│ [the]    █      ░      ░      ░      ░    HEAD 1/8  [H/L] Head  [h/j/k/l] Pan    │
-│ [cat]    ▒      █      ░      ░      ░    [+/-] Contrast  [F] Fullscreen          │
-│ [sat]    ░      ▒      █      ░      ░                                            │
-└───────────────────────────────────────────────────────────────────────────────────┘
-┌── 4. RUNTIME METRICS INSPECTOR ──────────┐┌── 5. NUMERICAL ANOMALY LEDGER ───────┐
-│ Layer   : blk.0.attn                     ││ 00.114 ⚠  Max activation 7.2 > 6.0  │
-│ Shape   : [1, 32, 2048]  Dtype: float16  ││ 00.128 ℹ  High Sparsity blk.3 > 80% │
-│ Sparsity: ████████░░░░ 54.2%            ││ 00.201 ℹ  Slow layer blk.5.ffn 8ms  │
-│ Mean    : 0.0023   Max: 4.871            ││                                      │
-│ Latency : 1.14ms                         ││                                      │
-└──────────────────────────────────────────┘└──────────────────────────────────────┘
+ llamaprobe | 0.8 tok/s | packets: 4788  anomalies: 12   [Tab] Focus  [?] Help  [Q] Quit
+──────────────────────────────────────────────────────────────────────────────────────────
+┌── 1. MODEL TOPOLOGY ──────────┐┌── 2. LIVE PACKET STREAM ──────────────────────────────┐
+│ ▼ tinyllama                   ││  ID    │ TIME    │ LAYER NAME           │ TYPE         │
+│   ● embedding                 ││  4781  │ 25.28   │ ffn_swiglu-7         │ MLP (SwiGLU) │
+│   ▼ layer-0                   ││  4782  │ 25.29   │ ffn_out-7            │ MLP (SwiGLU) │
+│     ● Qcur-0  [Attention]     ││  4783  │ 25.30   │ norm-8               │ LayerNorm    │
+│     ● Kcur-0  [Attention]     ││  4784  │ 25.31   │ Qcur-8               │ Attn (Self)  │
+│     ● ffn_inp-0  [MLP]        ││  4785  │ 25.32   │ Kcur-8               │ Attn (Self)  │
+│   ▼ layer-1                   │└──────────────────────────────────────────────────────────┘
+│     ● Qcur-1  [Attention]     │┌── 3. ATTENTION MATRIX VISUALIZER (HEAD 1/32) ──────────────────────────┐
+│  [j/k Navigate | Space Select]││ Q\Key [<s>] [Exp] [lain] [the] [tra.]   Viewport: [0-8] x [0-9]       │
+└───────────────────────────────││ [<s>]  ██    ░░    ░░     ░░    ░░     [Focus+F]: Fullscreen            │
+┌── 4. RUNTIME METRICS ─────────││ [Exp]  ▒▒    ██    ░░     ░░    ░░     [hjkl]: Pan  [H/L]: Head        │
+│ Layer   : Kcur-8              ││ [lain] ▒▒    ▒▒    ██     ░░    ░░     [+/-]: Contrast  2.00x           │
+│ Type    : Attn (Self)         ││ [the]  ░░    ░░    ▒▒     ██    ░░     Head: 1/32                       │
+│ Shape   : [22, 64]            │└────────────────────────────────────────────────────────────────────────────┘
+│ Sparsity: ░░░░░░░░░░░░  0%    │┌── 5. NUMERICAL ANOMALY LEDGER ─────────────────────────────────────────┐
+│ Mean    : -0.1595             ││ 25.28 ⚠  Outlier activation: max=15.37 > threshold=6.0                 │
+│ Max     : 15.378  ⚠           ││ 25.29 ℹ  High sparsity: 96%                                            │
+│ Latency : 0.014ms  ✓          ││ 25.31 ⚠  Slow layer: 420ms (avg=410ms)                                 │
+└───────────────────────────────│└─────────────────────────────────────────────────────────────────────────┘
+┌── 6. PER-TOKEN TIMELINE ───────────────────────────────────────────────────────────────────────────────────┐
+│  according  ████████████████████████████░░░░  213.4ms                                                      │
+│  to         ████████████████████████████████  220.1ms                                                      │
+│  transform  ███████████████████████░░░░░░░░░  195.2ms     avg: 208.3ms  max: 220.1ms  (12 tokens)         │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Screenshots
+
+### Full TUI — all 6 panels live during TinyLlama inference
+
+![llamaprobe full TUI](docs/tui-full.png)
+
+### Panel 3 — Attention Matrix Visualizer (Head 1/32)
+
+![Attention matrix heatmap](docs/attention-panel.png)
+
+---
+
+## What it does
+
+Most LLM inference tools are black boxes — you put in a prompt and get back text. **llamaprobe** opens that box. It installs a single callback (`ggml_backend_sched_eval_callback`) into the llama.cpp compute graph and observes every tensor that flows through the model during inference — **without modifying llama.cpp or the model weights**.
+
+Every captured tensor becomes a `LayerPacket` containing its name, shape, dtype, compute device, activation statistics (mean, max, sparsity), wall-clock latency delta, and an anomaly flag. These packets feed a lock-free ring buffer that the TUI reads at 10 Hz.
+
+---
 
 ## Features
 
-- **Non-invasive** — hooks `ggml_backend_sched_eval_callback`; zero changes to llama.cpp or the model
-- **Panel 1 — Model Topology**: collapsible layer tree built live from inference, `j/k` navigation, `Space` to pin a layer as the metrics target
-- **Panel 2 — Live Packet Stream**: scrolling table of every captured tensor with timestamp, layer type, and compute device; anomalous rows highlighted red
-- **Panel 3 — Attention Matrix Visualizer**: block-character heatmap (`█ ▓ ▒ ░ ·`), pannable viewport, adjustable contrast, head cycling
-- **Panel 4 — Runtime Metrics Inspector**: shape, dtype, sparsity bar, mean, max, and latency delta for the selected layer
-- **Panel 5 — Anomaly Ledger**: timestamped log of NaN/Inf, activation outliers, high sparsity, and latency spikes with ⚠ ✖ ℹ severity icons
+### Six live panels
+
+| Panel | What it shows |
+|-------|--------------|
+| **1 — Model Topology** | Collapsible tree of every captured tensor grouped by `layer-N` then type. Navigate with `j/k`, expand/collapse or select with `Space`. |
+| **2 — Live Packet Stream** | Scrolling table: packet ID, timestamp, tensor name, layer type, compute device. Anomalous rows highlighted red. Filter by name with `/`. |
+| **3 — Attention Matrix Visualizer** | Block-character heatmap (`██ ▓▓ ▒▒ ░░`) of the softmax attention weights. Pannable viewport, adjustable contrast, cycles all 32 heads. |
+| **4 — Runtime Metrics Inspector** | Shape, dtype, sparsity bar, mean, max, and latency for the layer selected in Panel 1. Shows before/after delta in comparison mode (`C`). |
+| **5 — Numerical Anomaly Ledger** | Timestamped log of NaN/Inf, activation outliers, high sparsity, and latency spikes with ⚠ ✖ ℹ severity icons. |
+| **6 — Per-Token Timeline** | Horizontal bar chart of decode latency per generated token. Tokens slower than 1.5× average highlighted yellow. |
+
+### Additional capabilities
+
+- **Session recording and replay** — record any run to JSON with `--record`, replay it later with `--replay` at original speed (no model needed for replay)
+- **Three export formats** — press `E` to export the current packet buffer to:
+  - `session_export.json` — full packet data with human-readable type/device/dtype labels
+  - `session_export.csv` — one row per packet, importable into pandas / Excel / R
+  - `session_export_perfetto.json` — Chrome Trace Event format, drag-and-drop into [ui.perfetto.dev](https://ui.perfetto.dev)
+- **Layer comparison mode** — press `C` to snapshot a layer's stats, then see the before/after delta in Panel 4
+- **Live stream filter** — press `/` in Panel 2 to filter by tensor name in real time; `Esc` to clear
+- **TOML configuration** — set model path, prompt, threads, and anomaly thresholds in `llamaprobe.toml`
+- **GPU offload** — pass `--n-gpu-layers N` to offload transformer blocks to CUDA
+- **Adjustable anomaly thresholds** — via CLI flags or config file, no recompile needed
+
+---
+
+## Requirements
+
+| Dependency | Version | Notes |
+|-----------|---------|-------|
+| CMake | ≥ 3.20 | |
+| C++ compiler | GCC ≥ 11 or Clang ≥ 14 | C++17 required |
+| Git | any | for submodule checkout |
+| CUDA toolkit | optional | only needed for `--n-gpu-layers` |
+
+All other dependencies (llama.cpp, FTXUI, nlohmann/json) are git submodules — no separate install needed.
+
+---
+
+## Build
+
+```bash
+# 1. Clone with submodules
+git clone --recurse-submodules https://github.com/atharv-pdarshi/llamaprobe
+cd llamaprobe
+
+# 2. Configure (CPU-only — works on any Linux/macOS machine)
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_VULKAN=OFF \
+  -DGGML_CCACHE=OFF -DLLAMA_CURL=OFF \
+  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF
+
+# 3. Build
+cmake --build build -j$(nproc)
+
+# Binary: build/llamaprobe
+```
+
+**With CUDA (optional):**
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON \
+  -DGGML_CCACHE=OFF -DLLAMA_CURL=OFF \
+  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF
+cmake --build build -j$(nproc)
+```
+
+---
+
+## Get a model
+
+llamaprobe works with any `.gguf` model. **TinyLlama 1.1B** is recommended for first-time testing — fast on CPU, only ~600 MB:
+
+```bash
+mkdir -p models
+wget "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" \
+     -O models/tinyllama.gguf
+```
+
+For a richer attention pattern, use a larger model:
+```bash
+wget "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf" \
+     -O models/llama3.2-3b.gguf
+```
+
+---
+
+## Run
+
+```bash
+# Basic — launch TUI with live inference
+./build/llamaprobe --model models/tinyllama.gguf
+
+# Custom prompt and token count
+./build/llamaprobe --model models/tinyllama.gguf \
+  --prompt "Explain how transformers work" \
+  --n-predict 128
+
+# GPU offload (22 layers = all of TinyLlama on GPU)
+./build/llamaprobe --model models/tinyllama.gguf --n-gpu-layers 22
+
+# Record a session to JSON while running
+./build/llamaprobe --model models/tinyllama.gguf --record sessions/run1.json
+
+# Replay a recorded session (no model needed)
+./build/llamaprobe --replay sessions/run1.json
+
+# Use a config file instead of flags
+./build/llamaprobe --config llamaprobe.toml
+
+# Debug mode — dump packets to stdout, no TUI
+./build/llamaprobe --model models/tinyllama.gguf --no-tui
+
+# Tune anomaly thresholds
+./build/llamaprobe --model models/tinyllama.gguf \
+  --max-activation 20.0 --sparsity-threshold 0.95 --latency-mult 5.0
+```
+
+### One-command demo (record then replay)
+
+```bash
+bash scripts/demo.sh                           # uses models/tinyllama.gguf
+bash scripts/demo.sh models/llama3.2-3b.gguf  # any other model
+```
+
+---
 
 ## Keybindings
 
 | Key | Action |
 |-----|--------|
 | `Tab` / `Shift+Tab` | Cycle panel focus forward / backward |
-| `j` / `k` | Navigate up / down in focused panel |
+| `j` / `k` | Scroll up / down in focused panel |
 | `h` / `l` | Pan attention matrix left / right |
-| `H` / `L` | Cycle attention head |
+| `H` / `L` | Previous / next attention head |
 | `Space` | Select layer as metrics target (Panel 1) |
 | `F` | Toggle attention matrix fullscreen |
 | `+` / `-` | Increase / decrease attention contrast |
+| `C` | Snapshot current layer for comparison in Panel 4 |
 | `P` | Pause / resume live capture |
+| `R` | Toggle session recording to JSON |
+| `E` | Export buffer to JSON + CSV + Perfetto |
+| `/` | Filter Panel 2 by tensor name (`Esc` to clear) |
 | `Q` | Quit |
 | `?` | Toggle keybinding help overlay |
 
-## Build
+---
 
-**Requirements:** CMake 3.20+, a C++17 compiler, Git.
+## Configuration file
 
-```bash
-# Clone with submodules (llama.cpp + FTXUI)
-git clone --recurse-submodules https://github.com/atharv-pdarshi/llamaprobe
-cd llamaprobe
+`llamaprobe.toml` is loaded automatically if present in the working directory. All values are overridden by CLI flags.
 
-# Build
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
-# Binary: build/llamaprobe
+```toml
+[model]
+# path = "models/tinyllama.gguf"   # uncomment to skip --model flag
+prompt = "Explain the transformer attention mechanism."
+n_predict = 128
+threads = 4
+n_gpu_layers = 0
+
+[anomaly]
+max_activation = 6.0       # warn if any activation exceeds this
+sparsity_threshold = 0.80  # warn if >80% of values are near zero
+latency_mult = 3.0         # warn if layer latency > 3x rolling average
+
+[record]
+# path = "sessions/auto.json"   # auto-start recording on launch
 ```
 
-## Download a model
+---
 
-llamaprobe works with any GGUF model. TinyLlama 1.1B is recommended for development (fast, ~600 MB):
+## CLI reference
 
-```bash
-mkdir -p models
-wget https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
-     -O models/tinyllama.gguf
+```
+Usage:
+  llamaprobe --model <path.gguf> [options]
+  llamaprobe --replay <session.json>
+
+Options:
+  --model <path>             Path to GGUF model file
+  --prompt <text>            Inference prompt (default: transformer explanation)
+  --n-predict <N>            Tokens to generate (default: 128)
+  --threads <N>              CPU inference threads (default: 4)
+  --n-gpu-layers <N>         Layers to offload to GPU (default: 0)
+  --record <path.json>       Auto-record session to file on launch
+  --replay <path.json>       Replay a saved session (no model needed)
+  --config <path.toml>       Config file path (default: llamaprobe.toml)
+  --max-activation <F>       Anomaly threshold: max activation value (default: 6.0)
+  --sparsity-threshold <F>   Anomaly threshold: sparsity fraction (default: 0.80)
+  --latency-mult <F>         Anomaly threshold: latency spike multiplier (default: 3.0)
+  --no-tui                   Dump packets to stdout instead of launching TUI
 ```
 
-For a more interesting demo, use Llama 3.2 3B:
+---
 
-```bash
-wget https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf \
-     -O models/llama3.2-3b.gguf
-```
+## Anomaly detection
 
-## Run
+| Condition | Severity | Icon |
+|-----------|----------|------|
+| NaN or Inf detected in tensor | Critical | ✖ |
+| `max_val > max_activation` threshold | Warning | ⚠ |
+| `sparsity > sparsity_threshold` | Info | ℹ |
+| `latency > latency_mult × rolling_avg` | Warning | ⚠ |
 
-```bash
-# Basic run — interactive TUI streams live inference data
-./build/llamaprobe --model models/tinyllama.gguf --prompt "Explain transformers in 3 sentences"
+Thresholds default to `max_activation=6.0`, `sparsity=0.80`, `latency_mult=3.0`. For large models where internal activations routinely exceed 6.0, raise `--max-activation` to 30–50 to reduce false positives.
 
-# With a longer prompt to stress the attention visualizer
-./build/llamaprobe --model models/llama3.2-3b.gguf \
-    --prompt "The history of neural networks begins in the 1940s when Warren McCulloch and Walter Pitts..."
-```
+---
 
 ## Run tests
 
 ```bash
-cmake --build build --target test_ring_buffer test_metrics test_anomaly test_topology
 ctest --test-dir build --output-on-failure
 ```
 
-## Anomaly detection rules
+Expected:
+```
+1/5 ring_buffer    Passed
+2/5 anomaly        Passed
+3/5 metrics        Passed
+4/5 topology       Passed
+5/5 integration    Passed
 
-| Condition | Severity |
-|-----------|----------|
-| `max_val > 6.0` in float16 layers | ⚠ Warning |
-| `sparsity > 80%` | ℹ Info |
-| `latency > 3× rolling average` | ⚠ Warning |
-| NaN or Inf anywhere in tensor | ✖ Critical |
+100% tests passed, 0 tests failed out of 5
+```
 
-Thresholds are defined in `src/hook_engine.hpp` (`thresh_max_activation`, `thresh_sparsity`, `thresh_latency_spike`).
+The test suite covers:
+- **ring_buffer** — concurrent push/snapshot correctness under load
+- **anomaly** — threshold detection and severity assignment
+- **metrics** — sparsity, mean, max computation on known float tensors
+- **topology** — `BaseName-N` tensor name parsing and tree grouping
+- **integration** — session JSON round-trip, replay ordering, AnomalyConfig defaults
+
+---
 
 ## Project structure
 
 ```
 llamaprobe/
 ├── CMakeLists.txt
+├── llamaprobe.toml              # default configuration
+├── .github/workflows/build.yml  # CI: build + test on ubuntu-22.04
+├── scripts/
+│   └── demo.sh                  # record then replay in one command
 ├── src/
-│   ├── main.cpp              # CLI arg parsing, llama context setup, inference loop
-│   ├── hook_engine.hpp/.cpp  # ggml callback, tensor capture, anomaly flagging
-│   ├── metrics.hpp/.cpp      # sparsity / mean / max / latency computations
-│   ├── anomaly_detector.hpp  # AnomalyEvent types and severity icons
-│   ├── ring_buffer.hpp       # thread-safe fixed-size circular buffer
-│   ├── topology.hpp/.cpp     # layer name → collapsible tree builder
-│   ├── session.hpp/.cpp      # session recording / replay (Phase 4)
+│   ├── main.cpp                 # CLI parsing, llama.cpp setup, inference loop
+│   ├── types.hpp                # LayerPacket, AttentionCapture, TokenTiming, enums
+│   ├── hook_engine.hpp/.cpp     # ggml callback, tensor capture, anomaly detection
+│   ├── metrics.hpp/.cpp         # sparsity / mean / max / latency computation
+│   ├── anomaly_detector.hpp     # AnomalyConfig thresholds and severity types
+│   ├── ring_buffer.hpp          # thread-safe fixed-size circular buffer
+│   ├── topology.hpp/.cpp        # tensor name → collapsible tree builder
+│   ├── session.hpp/.cpp         # JSON record / replay / CSV / Perfetto export
+│   ├── config.hpp/.cpp          # minimal TOML parser
 │   └── tui/
-│       ├── app.hpp/.cpp           # layout, focus routing, global keys
-│       ├── topology_panel.hpp/.cpp
-│       ├── stream_panel.hpp/.cpp
-│       ├── attention_panel.hpp/.cpp
-│       ├── metrics_panel.hpp/.cpp
-│       └── anomaly_panel.hpp/.cpp
+│       ├── app.hpp/.cpp             # layout, panel focus, global key routing
+│       ├── topology_panel.hpp/.cpp  # Panel 1 — model topology tree
+│       ├── stream_panel.hpp/.cpp    # Panel 2 — live packet stream
+│       ├── attention_panel.hpp/.cpp # Panel 3 — attention matrix heatmap
+│       ├── metrics_panel.hpp/.cpp   # Panel 4 — runtime metrics inspector
+│       ├── anomaly_panel.hpp/.cpp   # Panel 5 — anomaly ledger
+│       └── timeline_panel.hpp/.cpp  # Panel 6 — per-token timing bars
 ├── tests/
 │   ├── test_ring_buffer.cpp
-│   ├── test_topology.cpp
+│   ├── test_anomaly.cpp
 │   ├── test_metrics.cpp
-│   └── test_anomaly.cpp
-├── models/    # put .gguf files here (gitignored)
-├── sessions/  # exported JSON sessions
+│   ├── test_topology.cpp
+│   └── test_integration.cpp
+├── models/          # place .gguf files here (gitignored)
+├── sessions/        # recorded sessions go here (gitignored)
 └── third_party/
-    ├── llama.cpp/   (submodule)
-    ├── ftxui/       (submodule)
-    └── nlohmann/    (header-only JSON)
+    ├── llama.cpp/   (submodule — inference backend)
+    ├── ftxui/       (submodule — terminal UI framework)
+    └── nlohmann/    (header-only JSON library)
 ```
+
+---
+
+## Design decisions and assumptions
+
+**Single runtime — llama.cpp**
+The tool hooks `ggml_backend_sched_eval_callback`, which is llama.cpp-specific. Supporting other runtimes (ONNX Runtime, TensorRT) would require separate integrations per backend. Focusing on llama.cpp enables depth: per-head attention matrices, KV cache inspection, and per-layer timing that depend on llama.cpp internals.
+
+**Activation tensors only, not weights**
+llamaprobe captures floating-point tensors produced during a forward pass. Weight tensors are large, static, and uninteresting at inference time; activations are small, dynamic, and reveal what the model is computing. Quantized tensors are filtered out as they are always weights.
+
+**Flash Attention explicitly disabled**
+`LLAMA_FLASH_ATTN_TYPE_DISABLED` is set so the softmax attention weight tensor is materialised as a standalone named tensor. With Flash Attention enabled, the QKV computation is fused into a single kernel and the softmax weights never exist in memory — Panel 3 would have nothing to visualise.
+
+**Ring buffer, not unbounded queue**
+All shared state between the inference thread and the TUI thread uses fixed-size ring buffers (512 packets, 32 attention captures, 512 token timings). This bounds memory usage and keeps the inference hot path allocation-free. The TUI calls `snapshot()` which copies under a short lock without blocking the inference thread.
+
+**Temperature sampling for token generation**
+Temperature=0.8 with a distribution sampler is used instead of greedy decoding. Chat-format models (TinyLlama is trained with a chat template) select EOS immediately under greedy sampling when given a raw prompt, producing zero tokens and an empty Panel 6. Temperature sampling produces real output without requiring prompt formatting.
