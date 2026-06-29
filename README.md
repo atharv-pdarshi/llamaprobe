@@ -42,13 +42,7 @@ A C++17 real-time diagnostic tool that non-invasively hooks into local LLM infer
 
 ## Screenshots
 
-### Full TUI — all 6 panels live during TinyLlama inference
-
-![llamaprobe full TUI](docs/tui-full.png)
-
-### Panel 3 — Attention Matrix Visualizer (Head 1/32)
-
-![Attention matrix heatmap](docs/attention-panel.png)
+![llamaprobe live TUI](docs/tui-live.png)
 
 ---
 
