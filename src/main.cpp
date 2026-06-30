@@ -7,6 +7,7 @@
 #include "llama.h"
 #include "ggml.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -144,29 +145,71 @@ int main(int argc, char** argv) {
     engine.anomaly_cfg.latency_mult   = args.thresh_latency_mult;
 
     if (!args.replay_path.empty()) {
-        auto packets = Session::load(args.replay_path);
-        if (packets.empty()) {
-            std::fprintf(stderr, "Failed to load session: %s\n",
+        auto sdata = Session::load(args.replay_path);
+        if (sdata.packets.empty()) {
+            std::fprintf(stderr, "Failed to load session (or file is empty): %s\n",
                          args.replay_path.c_str());
             return 1;
         }
 
-        // Feed packets into the engine on a background thread, then run TUI
-        std::thread feeder([&] {
+        // Build a merged timeline of all four event types sorted by timestamp.
+        // This lets panels 3/5/6 appear at the right moment during replay.
+        struct ReplayEv {
+            uint64_t ts;
+            int      kind; // 0=packet, 1=attention, 2=timing, 3=anomaly
+            size_t   idx;
+        };
+        std::vector<ReplayEv> timeline;
+        timeline.reserve(sdata.packets.size()
+                       + sdata.attention_captures.size()
+                       + sdata.token_timings.size()
+                       + sdata.anomaly_events.size());
+
+        for (size_t i = 0; i < sdata.packets.size(); ++i)
+            timeline.push_back({sdata.packets[i].timestamp_us, 0, i});
+        for (size_t i = 0; i < sdata.attention_captures.size(); ++i)
+            timeline.push_back({sdata.attention_captures[i].timestamp_us, 1, i});
+        for (size_t i = 0; i < sdata.token_timings.size(); ++i)
+            timeline.push_back({sdata.token_timings[i].timestamp_us, 2, i});
+        for (size_t i = 0; i < sdata.anomaly_events.size(); ++i)
+            timeline.push_back({sdata.anomaly_events[i].timestamp_us, 3, i});
+
+        std::stable_sort(timeline.begin(), timeline.end(),
+                         [](const ReplayEv& a, const ReplayEv& b){
+                             return a.ts < b.ts; });
+
+        engine.inference_start = std::chrono::steady_clock::now();
+
+        std::thread feeder([&sdata, &timeline, &engine] {
             uint64_t prev_ts = 0;
-            for (const auto& pkt : packets) {
-                if (prev_ts > 0 && pkt.timestamp_us > prev_ts) {
-                    uint64_t delay_us = pkt.timestamp_us - prev_ts;
-                    // Cap per-packet sleep to 50 ms so replay doesn't feel sluggish
-                    uint64_t sleep_us = std::min(delay_us, uint64_t(50'000));
-                    std::this_thread::sleep_for(
-                        std::chrono::microseconds(sleep_us));
+            for (const auto& ev : timeline) {
+                if (prev_ts > 0 && ev.ts > prev_ts) {
+                    uint64_t delay_us = ev.ts - prev_ts;
+                    std::this_thread::sleep_for(std::chrono::microseconds(
+                        std::min(delay_us, uint64_t(50'000))));
                 }
-                prev_ts = pkt.timestamp_us;
-                engine.packets.push(pkt);
-                engine.packet_count.fetch_add(1);
-                if (pkt.is_anomaly)
-                    engine.anomaly_count.fetch_add(1);
+                prev_ts = ev.ts;
+
+                switch (ev.kind) {
+                    case 0: {
+                        const auto& pkt = sdata.packets[ev.idx];
+                        engine.packets.push(pkt);
+                        engine.packet_count.fetch_add(1);
+                        if (pkt.is_anomaly)
+                            engine.anomaly_count.fetch_add(1);
+                        break;
+                    }
+                    case 1:
+                        engine.attention.push(sdata.attention_captures[ev.idx]);
+                        break;
+                    case 2:
+                        engine.token_timings.push(sdata.token_timings[ev.idx]);
+                        engine.token_count.fetch_add(1);
+                        break;
+                    case 3:
+                        engine.anomalies.push(sdata.anomaly_events[ev.idx]);
+                        break;
+                }
             }
         });
 
@@ -281,6 +324,8 @@ int main(int argc, char** argv) {
             std::chrono::duration_cast<std::chrono::microseconds>(
                 tok_start - inference_start).count());
         engine.token_timings.push(tt);
+        if (engine.session_ptr && engine.recording.load())
+            engine.session_ptr->append_timing(tt);
 
         engine.token_count.fetch_add(1);
     }

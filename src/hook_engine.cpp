@@ -97,6 +97,8 @@ void HookEngine::on_tensor(const struct ggml_tensor* t) {
                     }
                 }
             }
+            if (session_ptr && recording.load())
+                session_ptr->append_attention(cap);
             attention.push(std::move(cap));
         }
     }
@@ -176,8 +178,9 @@ void HookEngine::check_anomalies(const LayerPacket& pkt,
         ev.description = std::move(desc);
         anomalies.push(ev);
         anomaly_count.fetch_add(1);
-        // Mark the packet we just built — caller will see this
         const_cast<LayerPacket&>(pkt).is_anomaly = true;
+        if (session_ptr && recording.load())
+            session_ptr->append_anomaly(ev);
     };
 
     if (stats.has_nan || stats.has_inf)

@@ -52,22 +52,23 @@ static Element make_help_overlay() {
 }
 
 static void export_snapshot(HookEngine& engine, const std::string& base_path) {
-    auto snap = engine.packets.snapshot();
+    auto snap_pkts = engine.packets.snapshot();
+    auto snap_attn = engine.attention.snapshot();
+    auto snap_tt   = engine.token_timings.snapshot();
+    auto snap_anom = engine.anomalies.snapshot();
 
-    // Write JSON session
     {
         Session tmp;
         tmp.start_recording(base_path + ".json");
-        for (const auto& pkt : snap)
-            tmp.append(pkt);
+        for (const auto& pkt : snap_pkts) tmp.append(pkt);
+        for (const auto& cap : snap_attn) tmp.append_attention(cap);
+        for (const auto& tt  : snap_tt)   tmp.append_timing(tt);
+        for (const auto& ev  : snap_anom) tmp.append_anomaly(ev);
         tmp.stop_recording();
     }
 
-    // Write CSV
-    Session::export_csv(snap, base_path + ".csv");
-
-    // Write Perfetto trace
-    Session::export_perfetto(snap, base_path + "_perfetto.json");
+    Session::export_csv(snap_pkts, base_path + ".csv");
+    Session::export_perfetto(snap_pkts, base_path + "_perfetto.json");
 }
 
 void run_tui(HookEngine& engine, const std::string& cli_record_path) {
@@ -224,7 +225,7 @@ void run_tui(HookEngine& engine, const std::string& cli_record_path) {
         }
         // E — export current packet buffer to JSON + CSV + Perfetto
         if (e == Event::Character('e') || e == Event::Character('E')) {
-            export_snapshot(engine, "session_export");
+            try { export_snapshot(engine, "session_export"); } catch (...) {}
             return true;
         }
         // C — snapshot current layer for comparison in Panel 4
@@ -264,9 +265,12 @@ void run_tui(HookEngine& engine, const std::string& cli_record_path) {
 
     screen.Loop(app);
 
-    if (engine.recording.load()) {
-        session.stop_recording();
-    }
+    // Stop recording and clear pointers before session goes out of scope.
+    // If we don't, the inference thread (main) can still call on_tensor with
+    // recording=true and session_ptr pointing to a destroyed stack object.
+    engine.recording.store(false);
+    engine.session_ptr = nullptr;
+    session.stop_recording();
 
     running = false;
     refresh.join();

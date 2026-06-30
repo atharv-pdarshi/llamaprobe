@@ -7,3 +7,5 @@ sessions/
 llm_tracing_plan.md
 .claude/
 session_export*
+session.json
+*.tmp
